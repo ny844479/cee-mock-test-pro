@@ -77,9 +77,62 @@ export default function Exam({ user }: ExamProps) {
           return;
         }
 
-        const qData = qSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-        // Shuffle questions (light randomization)
-        setQuestions(qData.sort(() => Math.random() - 0.5));
+        const qData: any[] = qSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+        
+        // Fisher-Yates Shuffle helper to randomize questions within each subject
+        const shuffleArray = (array: any[]) => {
+          const arr = [...array];
+          for (let i = arr.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [arr[i], arr[j]] = [arr[j], arr[i]];
+          }
+          return arr;
+        };
+
+        const normalizeSubject = (sub: string) => {
+          const norm = (sub || '').toLowerCase().trim();
+          if (norm === 'zoology') return 'zoology';
+          if (norm === 'botany') return 'botany';
+          if (norm === 'chemistry' || norm === 'chem') return 'chemistry';
+          if (norm === 'physics' || norm === 'phys') return 'physics';
+          if (norm === 'mat') return 'mat';
+          return norm;
+        };
+
+        // Group questions by subject
+        const groups: Record<string, any[]> = {};
+        qData.forEach(q => {
+          const sub = normalizeSubject(q.subject);
+          if (!groups[sub]) {
+            groups[sub] = [];
+          }
+          groups[sub].push(q);
+        });
+
+        // Shuffle questions within each subject group
+        Object.keys(groups).forEach(sub => {
+          groups[sub] = shuffleArray(groups[sub]);
+        });
+
+        // Predefined subject order (Zoology -> Botany -> Chemistry -> Physics -> MAT)
+        const SUBJECT_ORDER = ['zoology', 'botany', 'chemistry', 'physics', 'mat'];
+
+        const orderedQuestions: any[] = [];
+        // Add predefined subjects in correct sequence
+        SUBJECT_ORDER.forEach(sub => {
+          if (groups[sub]) {
+            orderedQuestions.push(...groups[sub]);
+          }
+        });
+
+        // Add any other subjects that were not predefined, for safety/robustness
+        Object.keys(groups).forEach(sub => {
+          if (!SUBJECT_ORDER.includes(sub)) {
+            orderedQuestions.push(...groups[sub]);
+          }
+        });
+
+        setQuestions(orderedQuestions);
         setLoading(false);
       } catch (err: any) {
         console.error(err);
