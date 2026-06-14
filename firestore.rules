@@ -1,0 +1,141 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+    
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == "ny844479@gmail.com" || 
+        request.auth.token.email == "ny789nk@gmail.com" || 
+        request.auth.token.email == "Ny844479@gmail.com" || 
+        request.auth.token.email == "Ny789nk@gmail.com" || 
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+      );
+    }
+    
+    function isCoAdmin() {
+      return isSignedIn() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'co-admin';
+    }
+    
+    function isStaff() {
+      return isAdmin() || isCoAdmin();
+    }
+    
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    
+    function isValidUser(data) {
+      return data.keys().hasAll(['name', 'email', 'role']) &&
+             data.name is string && data.name.size() <= 100 &&
+             data.email is string && data.email.size() <= 100 &&
+             data.role in ['student', 'admin', 'co-admin'];
+    }
+    
+    match /users/{userId} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || isStaff());
+      allow create: if isSignedIn() && request.auth.uid == userId &&
+                    isValidUser(incoming()) && 
+                    (incoming().role == 'student' || (incoming().role == 'admin' && isAdmin()) || (incoming().role == 'co-admin' && isAdmin()));
+      allow update: if (isSignedIn() && request.auth.uid == userId && isValidUser(incoming()) && incoming().role == existing().role) ||
+                       (isAdmin() && isValidUser(incoming()));
+      allow delete: if isAdmin();
+    }
+    
+    function isValidSettings(data) {
+       return (data.keys().hasAll(['link']) && data.link is string && data.link.size() <= 1000) ||
+              (data.keys().hasAll(['landingTitle', 'landingDescription']) && 
+               data.landingTitle is string && data.landingTitle.size() <= 200 &&
+               data.landingDescription is string && data.landingDescription.size() <= 4000) ||
+              (data.keys().hasAll(['paymentInstructions', 'paymentNumber', 'paymentMethod'])) ||
+              (data.keys().hasAll(['steps']) && data.steps is list);
+    }
+    
+    match /settings/{settingsId} {
+      allow read: if true;
+      allow write: if isAdmin() && isValidSettings(incoming());
+    }
+
+    function isValidPasswordReset(data) {
+      return data.keys().hasAll(['email', 'otp', 'expiresAt']) &&
+             data.email is string && data.email.size() <= 150 &&
+             data.otp is string && data.otp.size() == 6 &&
+             data.expiresAt is number;
+    }
+
+    match /password_resets/{emailId} {
+      allow read: if true;
+      allow create, update: if isValidPasswordReset(incoming());
+      allow delete: if false;
+    }
+    
+    function isValidExam(data) {
+      return data.keys().hasAll(['title', 'price', 'duration', 'isActive']) &&
+             data.title is string && data.title.size() <= 200 &&
+             data.price is number &&
+             data.duration is number &&
+             data.isActive is bool;
+    }
+    
+    match /exams/{examId} {
+      allow read: if true;
+      allow create, update: if (examId == 'instructions' ? isAdmin() : isStaff()) && isValidExam(incoming());
+      allow delete: if isAdmin();
+    }
+    
+    function isValidQuestion(data) {
+       return data.keys().hasAll(['examId', 'question', 'options', 'correctAnswer', 'subject']) &&
+              data.examId is string && data.examId.size() <= 128 &&
+              data.question is string && data.question.size() <= 2000 &&
+              data.options is list && data.options.size() <= 10 &&
+              data.correctAnswer is string && data.correctAnswer.size() <= 1000 &&
+              data.subject is string && data.subject.size() <= 100;
+    }
+    
+    match /questions/{questionId} {
+      allow read: if isSignedIn();
+      allow write: if isStaff() && isValidQuestion(incoming());
+      allow delete: if isStaff();
+    }
+    
+    function isValidPayment(data) {
+       return data.keys().hasAll(['studentId', 'examId', 'transactionId', 'status']) &&
+              data.studentId is string && data.studentId.size() <= 128 &&
+              data.examId is string && data.examId.size() <= 128 &&
+              data.transactionId is string && data.transactionId.size() <= 100 &&
+              data.status in ['pending', 'approved', 'rejected'];
+    }
+    
+    match /payments/{paymentId} {
+      allow read: if isSignedIn() && (resource.data.studentId == request.auth.uid || isStaff());
+      allow create: if isSignedIn() && (
+                      (incoming().studentId == request.auth.uid && isValidPayment(incoming()) && incoming().status == 'pending') ||
+                      isStaff()
+                    );
+      allow update: if isAdmin() || (isCoAdmin() && (incoming().status != 'rejected'));
+    }
+    
+    function isValidResult(data) {
+       return data.keys().hasAll(['studentId', 'examId', 'score', 'timeTaken', 'studentName']) &&
+              data.studentId is string && data.studentId.size() <= 128 &&
+              data.examId is string && data.examId.size() <= 128 &&
+              data.score is number && 
+              data.timeTaken is number &&
+              data.studentName is string && data.studentName.size() <= 100;
+    }
+    
+    match /results/{resultId} {
+      allow read: if true;
+      allow create: if isSignedIn() && 
+                    incoming().studentId == request.auth.uid;
+      allow update, delete: if isStaff();
+    }
+  }
+}

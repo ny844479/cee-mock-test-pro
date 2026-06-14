@@ -1,0 +1,102 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "A user of the platform",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "studentId": { "type": "string" },
+        "role": { "type": "string", "enum": ["student", "admin"] }
+      },
+      "required": ["name", "email", "role"]
+    },
+    "Exam": {
+      "title": "Exam",
+      "description": "An exam created by the admin",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "price": { "type": "number" },
+        "duration": { "type": "number" },
+        "isActive": { "type": "boolean" },
+        "totalQuestions": { "type": "number" }
+      },
+      "required": ["title", "price", "duration", "isActive"]
+    },
+    "Question": {
+      "title": "Question",
+      "description": "A question for an exam",
+      "type": "object",
+      "properties": {
+        "examId": { "type": "string" },
+        "question": { "type": "string" },
+        "options": { "type": "array" },
+        "correctAnswer": { "type": "string" },
+        "subject": { "type": "string" }
+      },
+      "required": ["examId", "question", "options", "correctAnswer", "subject"]
+    },
+    "Payment": {
+      "title": "Payment",
+      "description": "A payment submission by a student",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "examId": { "type": "string" },
+        "transactionId": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] }
+      },
+      "required": ["studentId", "examId", "transactionId", "status"]
+    },
+    "Result": {
+      "title": "Result",
+      "description": "A student's exam result",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "examId": { "type": "string" },
+        "score": { "type": "number" },
+        "timeTaken": { "type": "number" },
+        "studentName": { "type": "string" }
+      },
+      "required": ["studentId", "examId", "score", "timeTaken", "studentName"]
+    },
+    "Settings": {
+      "title": "Settings",
+      "description": "Global settings for the application",
+      "type": "object",
+      "properties": {
+        "link": { "type": "string" }
+      },
+      "required": ["link"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Platform users"
+    },
+    "settings/{settingsId}": {
+      "schema": { "$ref": "#/entities/Settings" },
+      "description": "Global application configuration settings modules"
+    },
+    "exams/{examId}": {
+      "schema": { "$ref": "#/entities/Exam" },
+      "description": "Available exams"
+    },
+    "questions/{questionId}": {
+      "schema": { "$ref": "#/entities/Question" },
+      "description": "Exam questions"
+    },
+    "payments/{paymentId}": {
+      "schema": { "$ref": "#/entities/Payment" },
+      "description": "Exam payments"
+    },
+    "results/{resultId}": {
+      "schema": { "$ref": "#/entities/Result" },
+      "description": "Exam results"
+    }
+  }
+}
