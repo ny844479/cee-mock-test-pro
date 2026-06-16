@@ -752,45 +752,30 @@ export default function AdminDashboard({ userRole }: AdminDashboardProps) {
 
         // Extract Options: Support both options array or opt1-opt4 properties
         let options: string[] = [];
-        if (Array.isArray(q.options) && q.options.length >= 4) {
+        
+        if (Array.isArray(q.options)) {
           options = q.options.slice(0, 4).map((o: any) => String(o));
+        } else if (q.options && typeof q.options === 'object') {
+          // Support for options as an object mapping, e.g. {"A": "Option 1", "B": "Option 2"}
+          options = Object.values(q.options).slice(0, 4).map((o: any) => String(o));
         } else if (
-          q.opt1 !== undefined &&
-          q.opt2 !== undefined &&
-          q.opt3 !== undefined &&
-          q.opt4 !== undefined
+          q.opt1 !== undefined ||
+          q.opt2 !== undefined
         ) {
           options = [
-            String(q.opt1),
-            String(q.opt2),
-            String(q.opt3),
-            String(q.opt4),
+            q.opt1 !== undefined ? String(q.opt1) : "",
+            q.opt2 !== undefined ? String(q.opt2) : "",
+            q.opt3 !== undefined ? String(q.opt3) : "",
+            q.opt4 !== undefined ? String(q.opt4) : "",
           ];
         } else {
-          // Attempt to build/collect any options available
-          const rawOpts = Array.isArray(q.options) ? q.options : [];
-          options = [
-            rawOpts[0] !== undefined
-              ? String(rawOpts[0])
-              : q.opt1 !== undefined
-                ? String(q.opt1)
-                : "",
-            rawOpts[1] !== undefined
-              ? String(rawOpts[1])
-              : q.opt2 !== undefined
-                ? String(q.opt2)
-                : "",
-            rawOpts[2] !== undefined
-              ? String(rawOpts[2])
-              : q.opt3 !== undefined
-                ? String(q.opt3)
-                : "",
-            rawOpts[3] !== undefined
-              ? String(rawOpts[3])
-              : q.opt4 !== undefined
-                ? String(q.opt4)
-                : "",
-          ];
+          // Fallback
+          options = ["", "", "", ""];
+        }
+
+        // Pad to ensure we always have 4 elements, but that's handled by Firebase schema (it's less strict as long as there are at least 2)
+        while (options.length < 4) {
+          options.push("");
         }
 
         // Validate that options have some content
