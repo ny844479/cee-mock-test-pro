@@ -79,8 +79,24 @@ export default function Result({ user, isAdmin }: ResultProps) {
         }
 
         // Fetch Questions for detailed view reviews
-        const qDocs = await getDocs(query(collection(db, 'questions'), where('examId', '==', rData.examId)));
-        const qList = qDocs.docs.map(d => ({ id: d.id, ...d.data() }));
+        const cachedQuestionsStr = localStorage.getItem(`exam_questions_${rData.examId}`);
+        const qCache = cachedQuestionsStr ? JSON.parse(cachedQuestionsStr) : null;
+        
+        let qList: any[] = [];
+        const CACHE_EXPIRY = 12 * 60 * 60 * 1000; // 12 hours cache
+        const now = new Date();
+        
+        if (qCache && qCache.timestamp && (now.getTime() - qCache.timestamp < CACHE_EXPIRY)) {
+          qList = qCache.data;
+        } else {
+          const qDocs = await getDocs(query(collection(db, 'questions'), where('examId', '==', rData.examId)));
+          qList = qDocs.docs.map(d => ({ id: d.id, ...d.data() }));
+          localStorage.setItem(`exam_questions_${rData.examId}`, JSON.stringify({
+            timestamp: now.getTime(),
+            data: qList
+          }));
+        }
+
         setQuestions(qList);
 
         if (rData.unattempted || (examData && examData.leaderboardEnabled === false)) {
@@ -91,10 +107,26 @@ export default function Result({ user, isAdmin }: ResultProps) {
           // 2. Biology Score Descending
           // 3. Chemistry Score Descending
           // 4. Physics Score Descending
-          const q = query(collection(db, 'results'), where('examId', '==', rData.examId));
-          const allRes = await getDocs(q);
-          const scores = allRes.docs
-             .map(d => ({ id: d.id, ...d.data() as any }))
+          const CACHE_KEY = `leaderboard_${rData.examId}`;
+          const CACHE_EXPIRY = 5 * 60 * 1000;
+          const cachedStr = localStorage.getItem(CACHE_KEY);
+          const cache = cachedStr ? JSON.parse(cachedStr) : null;
+          const now = new Date().getTime();
+          
+          let allResults = [];
+          if (cache && cache.timestamp && (now - cache.timestamp < CACHE_EXPIRY)) {
+            allResults = cache.data;
+          } else {
+            const q = query(collection(db, 'results'), where('examId', '==', rData.examId));
+            const allRes = await getDocs(q);
+            allResults = allRes.docs.map(d => ({ id: d.id, ...d.data() as any }));
+            localStorage.setItem(CACHE_KEY, JSON.stringify({
+              timestamp: now,
+              data: allResults
+            }));
+          }
+
+          const scores = allResults
              .sort((a, b) => {
                 if (b.score !== a.score) {
                   return b.score - a.score;
