@@ -55,7 +55,8 @@ service cloud.firestore {
                data.landingTitle is string && data.landingTitle.size() <= 200 &&
                data.landingDescription is string && data.landingDescription.size() <= 4000) ||
               (data.keys().hasAll(['paymentInstructions', 'paymentNumber', 'paymentMethod'])) ||
-              (data.keys().hasAll(['steps']) && data.steps is list);
+              (data.keys().hasAll(['steps']) && data.steps is list) ||
+              (data.keys().hasAll(['autoVerification']) && data.autoVerification is bool);
     }
     
     match /settings/{settingsId} {
