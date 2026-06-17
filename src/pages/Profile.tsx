@@ -629,3 +629,4 @@ export default function Profile({ user, userRole }: ProfileProps) {
     </div>
   );
 }
+
