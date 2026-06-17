@@ -747,3 +747,4 @@ export default function StudentDashboard({ user, isVerified = true }: StudentDas
     </div>
   );
 }
+
