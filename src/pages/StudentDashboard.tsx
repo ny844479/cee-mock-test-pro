@@ -16,6 +16,7 @@ import {
   CheckCircle,
   Clock,
   MessageSquare,
+  RotateCw,
 } from "lucide-react";
 
 interface StudentDashboardProps {
@@ -35,6 +36,7 @@ export default function StudentDashboard({ user, isVerified = true }: StudentDas
     buttonText: string;
   } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [instructions, setInstructions] = useState<any[]>([]);
   const [selectedGuidancePhoto, setSelectedGuidancePhoto] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -57,177 +59,182 @@ export default function StudentDashboard({ user, isVerified = true }: StudentDas
     }
   }, [location.hash, loading]);
 
-  useEffect(() => {
-    async function fetchData() {
+  async function fetchDashboardData(force = false) {
+    if (force) {
+      setIsRefreshing(true);
+    } else {
+      setLoading(true);
+    }
+    try {
+      const EXAMS_CACHE_KEY = "student_exams_cache";
+      const CACHE_EXPIRY = 60 * 1000; // 1 minute Cache TTL to dramatically reduce database reads
+      const now = new Date().getTime();
+      
+      let examsData: any[] = [];
+      const cacheStr = localStorage.getItem(EXAMS_CACHE_KEY);
+      const cache = cacheStr ? JSON.parse(cacheStr) : null;
+      
+      if (!force && cache && cache.timestamp && (now - cache.timestamp < CACHE_EXPIRY)) {
+        examsData = cache.data;
+      } else {
+        const examsQuery = query(collection(db, "exams"));
+        const examsSnapshot = await getDocs(examsQuery);
+        examsData = examsSnapshot.docs
+          .map((doc) => ({ id: doc.id, ...doc.data() }))
+          .filter(
+            (exam) =>
+              exam.id !== "whatsapp" &&
+              exam.id !== "landing" &&
+              exam.id !== "payment" &&
+              exam.id !== "instructions",
+          );
+        localStorage.setItem(EXAMS_CACHE_KEY, JSON.stringify({
+          timestamp: now,
+          data: examsData
+        }));
+      }
+      setExams(examsData);
+
+      // Fetch payments for this student
+      const paymentsQuery = query(
+        collection(db, "payments"),
+        where("studentId", "==", user.uid),
+      );
+      const paymentsSnapshot = await getDocs(paymentsQuery);
+      const paymentsData: Record<string, any> = {};
+      paymentsSnapshot.docs.forEach((doc) => {
+        paymentsData[doc.data().examId] = { id: doc.id, ...doc.data() };
+      });
+      setPayments(paymentsData);
+
+      // Fetch results for this student
+      const resultsQuery = query(
+        collection(db, "results"),
+        where("studentId", "==", user.uid),
+      );
+      const resultsSnapshot = await getDocs(resultsQuery);
+      const resultsData: Record<string, any> = {};
+      resultsSnapshot.docs.forEach((doc) => {
+        resultsData[doc.data().examId] = { id: doc.id, ...doc.data() };
+      });
+      setResults(resultsData);
+
+      // Fetch WhatsApp Settings Notice configurations directly
       try {
-        // Fetch exams
-        const EXAMS_CACHE_KEY = "student_exams_cache";
-        const CACHE_EXPIRY = 5 * 60 * 1000; // 5 minutes
-        const now = new Date().getTime();
+        let noticeData: any = null;
+        const NOTICE_CACHE_KEY = "student_settings_notice";
+        const NOTICE_CACHE_EXPIRY = 5 * 105 * 1000; // 5 mins for instructions and notices
+        const noticeCacheStr = localStorage.getItem(NOTICE_CACHE_KEY);
+        const noticeCache = noticeCacheStr ? JSON.parse(noticeCacheStr) : null;
         
-        let examsData: any[] = [];
-        const examsCacheStr = localStorage.getItem(EXAMS_CACHE_KEY);
-        const examsCache = examsCacheStr ? JSON.parse(examsCacheStr) : null;
-        
-        if (examsCache && examsCache.timestamp && (now - examsCache.timestamp < CACHE_EXPIRY)) {
-          examsData = examsCache.data;
+        if (!force && noticeCache && noticeCache.timestamp && (now - noticeCache.timestamp < NOTICE_CACHE_EXPIRY)) {
+          noticeData = noticeCache.data;
         } else {
-          const examsQuery = query(collection(db, "exams"));
-          const examsSnapshot = await getDocs(examsQuery);
-          examsData = examsSnapshot.docs
-            .map((doc) => ({ id: doc.id, ...doc.data() }))
-            .filter(
-              (exam) =>
-                exam.id !== "whatsapp" &&
-                exam.id !== "landing" &&
-                exam.id !== "payment" &&
-                exam.id !== "instructions",
+          // First attempt exams/whatsapp configuration (guaranteed to be readable & writeable)
+          try {
+            const docRef = doc(db, "exams", "whatsapp");
+            const docSnap = await getDoc(docRef);
+            if (docSnap.exists()) {
+              const data = docSnap.data();
+              noticeData = {
+                isActive: data.isActive === true, // Check if explicitly turned on by admin
+                title: data.title || "CEE Mock Test Pro Notice",
+                noticeBody:
+                  data.noticeBody ||
+                  "Attention Students: All tournament prizes for this mock test season will be distributed exclusively through the official WhatsApp group. Click the join link to stay eligible and receive direct updates.",
+                whatsappLink: data.whatsappLink || data.link || "",
+                buttonText: data.buttonText || "Join WhatsApp Group",
+              };
+            }
+          } catch (examsNoticeErr) {
+            console.log(
+              "Could not fetch notice from exams/whatsapp directly",
+              examsNoticeErr,
             );
-          localStorage.setItem(EXAMS_CACHE_KEY, JSON.stringify({
-            timestamp: now,
-            data: examsData
-          }));
-        }
-        setExams(examsData);
+          }
 
-        // Fetch payments for this student
-        const paymentsQuery = query(
-          collection(db, "payments"),
-          where("studentId", "==", user.uid),
-        );
-        const paymentsSnapshot = await getDocs(paymentsQuery);
-        const paymentsData: Record<string, any> = {};
-        paymentsSnapshot.docs.forEach((doc) => {
-          paymentsData[doc.data().examId] = { id: doc.id, ...doc.data() };
-        });
-        setPayments(paymentsData);
-
-        // Fetch results for this student
-        const resultsQuery = query(
-          collection(db, "results"),
-          where("studentId", "==", user.uid),
-        );
-        const resultsSnapshot = await getDocs(resultsQuery);
-        const resultsData: Record<string, any> = {};
-        resultsSnapshot.docs.forEach((doc) => {
-          resultsData[doc.data().examId] = { id: doc.id, ...doc.data() };
-        });
-        setResults(resultsData);
-
-        // Fetch WhatsApp Settings Notice configurations
-        try {
-          let noticeData: any = null;
-          
-          const NOTICE_CACHE_KEY = "student_settings_notice";
-          const CACHE_EXPIRY = 30 * 60 * 1000; // 30 minutes
-          const noticeCacheStr = localStorage.getItem(NOTICE_CACHE_KEY);
-          const noticeCache = noticeCacheStr ? JSON.parse(noticeCacheStr) : null;
-          if (noticeCache && noticeCache.timestamp && (now - noticeCache.timestamp < CACHE_EXPIRY)) {
-            noticeData = noticeCache.data;
-          } else {
-            // First attempt exams/whatsapp configuration (guaranteed to be readable & writeable)
+          // Back fallback to settings/whatsapp
+          if (!noticeData) {
             try {
-              const docRef = doc(db, "exams", "whatsapp");
+              const docRef = doc(db, "settings", "whatsapp");
               const docSnap = await getDoc(docRef);
               if (docSnap.exists()) {
                 const data = docSnap.data();
                 noticeData = {
-                  isActive: data.isActive === true, // Check if explicitly turned on by admin
-                  title: data.title || "CEE Mock Test Pro Notice",
+                  isActive: data.isActive !== false,
+                  title:
+                    data.title || "CEE Mock Test Pro Notice",
                   noticeBody:
                     data.noticeBody ||
                     "Attention Students: All tournament prizes for this mock test season will be distributed exclusively through the official WhatsApp group. Click the join link to stay eligible and receive direct updates.",
-                  whatsappLink: data.whatsappLink || data.link || "",
+                  whatsappLink: data.link || data.whatsappLink || "",
                   buttonText: data.buttonText || "Join WhatsApp Group",
                 };
               }
-            } catch (examsNoticeErr) {
+            } catch (settingsErr) {
               console.log(
-                "Could not fetch notice from exams/whatsapp directly",
-                examsNoticeErr,
+                "Could not fetch settings/whatsapp fallback:",
+                settingsErr,
               );
             }
-
-            // Back fallback to settings/whatsapp
-            if (!noticeData) {
-              try {
-                const docRef = doc(db, "settings", "whatsapp");
-                const docSnap = await getDoc(docRef);
-                if (docSnap.exists()) {
-                  const data = docSnap.data();
-                  noticeData = {
-                    isActive: data.isActive !== false,
-                    title:
-                      data.title || "CEE Mock Test Pro Notice",
-                    noticeBody:
-                      data.noticeBody ||
-                      "Attention Students: All tournament prizes for this mock test season will be distributed exclusively through the official WhatsApp group. Click the join link to stay eligible and receive direct updates.",
-                    whatsappLink: data.link || data.whatsappLink || "",
-                    buttonText: data.buttonText || "Join WhatsApp Group",
-                  };
-                }
-              } catch (settingsErr) {
-                console.log(
-                  "Could not fetch settings/whatsapp fallback:",
-                  settingsErr,
-                );
-              }
-            }
-            
-            if (noticeData) {
-              localStorage.setItem(NOTICE_CACHE_KEY, JSON.stringify({
-                timestamp: now,
-                data: noticeData
-              }));
-            }
           }
-
-          setNotice(noticeData);
-
-          // Fetch instructions
-          let instrData: any[] = [];
-          const INST_CACHE_KEY = "student_settings_instructions";
-          const instCacheStr = localStorage.getItem(INST_CACHE_KEY);
-          const instCache = instCacheStr ? JSON.parse(instCacheStr) : null;
-          if (instCache && instCache.timestamp && (now - instCache.timestamp < CACHE_EXPIRY)) {
-            instrData = instCache.data;
-          } else {
-            try {
-              const docRef = doc(db, "exams", "instructions");
-              const docSnap = await getDoc(docRef);
-              if (docSnap.exists()) {
-                instrData = docSnap.data().steps || [];
-              } else {
-                // try settings
-                const setRef = doc(db, "settings", "instructions");
-                const setSnap = await getDoc(setRef);
-                if (setSnap.exists()) {
-                  instrData = setSnap.data().steps || [];
-                }
-              }
-              localStorage.setItem(INST_CACHE_KEY, JSON.stringify({
-                timestamp: now,
-                data: instrData
-              }));
-            } catch (e) {
-              console.warn("Could not load exam instructions:", e);
-            }
+          
+          if (noticeData) {
+            localStorage.setItem(NOTICE_CACHE_KEY, JSON.stringify({
+              timestamp: now,
+              data: noticeData
+            }));
           }
-          setInstructions(instrData);
-        } catch (err) {
-          console.error(
-            "Failed to fetch WhatsApp link settings through both endpoints",
-            err,
-          );
         }
-      } catch (err) {
-        console.error("Failed to fetch dashboard data", err);
-      } finally {
-        setLoading(false);
-      }
-    }
 
-    fetchData();
+        setNotice(noticeData);
+
+        // Fetch instructions directly
+        let instrData: any[] = [];
+        const INST_CACHE_KEY = "student_settings_instructions";
+        const instCacheStr = localStorage.getItem(INST_CACHE_KEY);
+        const instCache = instCacheStr ? JSON.parse(instCacheStr) : null;
+        if (!force && instCache && instCache.timestamp && (now - instCache.timestamp < NOTICE_CACHE_EXPIRY)) {
+          instrData = instCache.data;
+        } else {
+          try {
+            const docRef = doc(db, "exams", "instructions");
+            const docSnap = await getDoc(docRef);
+            if (docSnap.exists()) {
+              instrData = docSnap.data().steps || [];
+            } else {
+              // try settings
+              const setRef = doc(db, "settings", "instructions");
+              const setSnap = await getDoc(setRef);
+              if (setSnap.exists()) {
+                instrData = setSnap.data().steps || [];
+              }
+            }
+            localStorage.setItem(INST_CACHE_KEY, JSON.stringify({
+              timestamp: now,
+              data: instrData
+            }));
+          } catch (e) {
+            console.warn("Could not load exam instructions:", e);
+          }
+        }
+        setInstructions(instrData);
+      } catch (err) {
+        console.error(
+          "Failed to fetch WhatsApp link settings through both endpoints",
+          err,
+        );
+      }
+    } catch (err) {
+      console.error("Failed to fetch dashboard data", err);
+    } finally {
+      setLoading(false);
+      setIsRefreshing(false);
+    }
+  }
+
+  useEffect(() => {
+    fetchDashboardData(false);
   }, [user]);
 
   if (loading) {
@@ -239,11 +246,23 @@ export default function StudentDashboard({ user, isVerified = true }: StudentDas
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <div className="mb-6 border-b border-gray-200 pb-4 flex flex-col sm:flex-row justify-between sm:items-center gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Student Dashboard</h1>
-          <p className="text-sm text-gray-500 mt-0.5">
-            Manage your mock exams and view results
-          </p>
+        <div className="flex items-center gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2.5">
+              <span>Student Dashboard</span>
+              <button
+                onClick={() => fetchDashboardData(true)}
+                disabled={isRefreshing}
+                title="Refresh dashboard"
+                className={`p-1.5 text-gray-400 hover:text-blue-600 hover:bg-gray-100 rounded-lg transition-all ${isRefreshing ? "animate-spin text-blue-600" : ""}`}
+              >
+                <RotateCw className="w-4 h-4" />
+              </button>
+            </h1>
+            <p className="text-sm text-gray-500 mt-0.5">
+              Manage your mock exams and view results
+            </p>
+          </div>
         </div>
         <Link
           to="/instructions"
@@ -747,4 +766,3 @@ export default function StudentDashboard({ user, isVerified = true }: StudentDas
     </div>
   );
 }
-
