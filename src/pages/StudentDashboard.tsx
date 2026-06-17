@@ -352,9 +352,7 @@ export default function StudentDashboard({ user, isVerified = true }: StudentDas
                           exam.endTime && currentTime > new Date(exam.endTime);
 
                         // If there is a starting time, payment locks automatically starting 10 minutes before the exams starts
-                        const isPaymentLocked =
-                          exam.startTime &&
-                          (new Date(exam.startTime).getTime() - currentTime.getTime()) < 10 * 60 * 1000;
+                        const isPaymentLocked = false;
 
                         return (
                           <div
