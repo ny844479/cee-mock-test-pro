@@ -60,7 +60,14 @@ export default function Leaderboard({ user }: LeaderboardProps) {
         
         let results = [];
         
-        if (cache && cache.timestamp && (now - cache.timestamp < CACHE_EXPIRY)) {
+        const currentExamObj = exams.find(e => e.id === selectedExam);
+        
+        let isCacheValid = cache && cache.timestamp && (now - cache.timestamp < CACHE_EXPIRY);
+        if (isCacheValid && currentExamObj && currentExamObj.updatedAt && cache.timestamp < currentExamObj.updatedAt) {
+          isCacheValid = false;
+        }
+
+        if (isCacheValid) {
           results = cache.data;
         } else {
           const q = query(
