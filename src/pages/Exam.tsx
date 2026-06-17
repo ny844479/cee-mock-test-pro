@@ -651,3 +651,4 @@ export default function Exam({ user }: ExamProps) {
     </div>
   );
 }
+
