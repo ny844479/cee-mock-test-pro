@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import Papa from "papaparse";
 import {
   collection,
   query,
@@ -60,6 +61,7 @@ export default function AdminDashboard({ userRole }: AdminDashboardProps) {
   const [selectedExamId, setSelectedExamId] = useState("");
   const [newQuestion, setNewQuestion] = useState({
     question: "",
+    imageUrl: "",
     opt1: "",
     opt2: "",
     opt3: "",
@@ -696,14 +698,19 @@ export default function AdminDashboard({ userRole }: AdminDashboardProps) {
       await setDoc(doc(db, "questions", questionId), {
         examId: selectedExamId,
         question: newQuestion.question,
+        imageUrl: newQuestion.imageUrl || null,
         options: options,
         correctAnswer: correctVal,
         subject: newQuestion.subject,
+      });
+      await updateDoc(doc(db, "exams", selectedExamId), {
+         updatedAt: new Date().getTime()
       });
       alert("Question added successfully!");
       setNewQuestion({
         ...newQuestion,
         question: "",
+        imageUrl: "",
         opt1: "",
         opt2: "",
         opt3: "",
@@ -715,46 +722,97 @@ export default function AdminDashboard({ userRole }: AdminDashboardProps) {
     }
   };
 
+  const handleLocalImageUpload = (
+    e: React.ChangeEvent<HTMLInputElement>,
+    setImageCallback: (base64Url: string) => void
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 10 * 1024 * 1024) {
+      alert("Image file cannot be larger than 10MB");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const base64Str = event.target?.result as string;
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        let width = img.width;
+        let height = img.height;
+        const max_size = 750;
+        if (width > max_size || height > max_size) {
+          if (width > height) {
+            height = Math.round((height * max_size) / width);
+            width = max_size;
+          } else {
+            width = Math.round((width * max_size) / height);
+            height = max_size;
+          }
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          const compressedBase64 = canvas.toDataURL("image/jpeg", 0.75);
+          setImageCallback(compressedBase64);
+        } else {
+          setImageCallback(base64Str);
+        }
+      };
+      img.src = base64Str;
+    };
+    reader.readAsDataURL(file);
+  };
+
+
   const handleBulkAddQuestions = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedExamId) return alert("Select an exam first");
 
     try {
-      // 1. Parse JSON safely
-      let dataset: any;
-      try {
-        dataset = JSON.parse(bulkQuestions);
-      } catch (parseErr: any) {
-        return alert(
-          `JSON Parse Error: ${parseErr.message}\nPlease make sure the JSON format is correct.`,
-        );
-      }
-
-      // 2. Extract array of questions
       let questionsToUpload: any[] = [];
       let inferredSubject = bulkSubject;
+      
+      const textToParse = bulkQuestions.trim();
 
-      if (dataset && typeof dataset === "object" && !Array.isArray(dataset)) {
-        if (Array.isArray(dataset.questions)) {
-          questionsToUpload = dataset.questions;
-        } else if (Array.isArray(dataset.data)) {
-          questionsToUpload = dataset.data;
-        } else {
-          // Maybe it's a single question object
-          questionsToUpload = [dataset];
+      if (textToParse.startsWith('[') || textToParse.startsWith('{')) {
+        // Looks like JSON
+        try {
+          const dataset = JSON.parse(textToParse);
+          if (dataset && typeof dataset === "object" && !Array.isArray(dataset)) {
+            if (Array.isArray(dataset.questions)) {
+              questionsToUpload = dataset.questions;
+            } else if (Array.isArray(dataset.data)) {
+              questionsToUpload = dataset.data;
+            } else {
+              questionsToUpload = [dataset];
+            }
+            if (dataset.subject) inferredSubject = dataset.subject;
+          } else if (Array.isArray(dataset)) {
+            questionsToUpload = dataset;
+          }
+        } catch (parseErr: any) {
+          return alert(`JSON Parse Error: ${parseErr.message}\nPlease make sure the JSON format is correct.`);
         }
-
-        // Infer subject if defined in root object
-        if (dataset.subject) {
-          inferredSubject = dataset.subject;
+      } else {
+        // Try CSV parsing
+        const parsed = Papa.parse(textToParse, {
+          header: true,
+          skipEmptyLines: true,
+        });
+        if (parsed.errors.length > 0) {
+          return alert(`CSV Parse Error: ${parsed.errors[0].message}`);
         }
-      } else if (Array.isArray(dataset)) {
-        questionsToUpload = dataset;
+        questionsToUpload = parsed.data;
       }
 
       if (questionsToUpload.length === 0) {
         return alert(
-          'Could not find any questions to upload. Ensure the JSON is a list of questions, or contains a "questions" array.',
+          'Could not find any questions to upload. Ensure the JSON/CSV contains a list of questions.',
         );
       }
 
@@ -764,13 +822,22 @@ export default function AdminDashboard({ userRole }: AdminDashboardProps) {
 
       // 3. Process each question
       for (const q of questionsToUpload) {
+        // Normalize keys (lowercase and remove spaces for easier matching)
+        const normalizedQ: Record<string, any> = {};
+        for (const key of Object.keys(q)) {
+          normalizedQ[key.toLowerCase().replace(/ /g, "")] = q[key];
+        }
+
         // Extract the question text
-        const qText = q.question || q.text || q.questionText || q.title;
+        const qText = normalizedQ.question || normalizedQ.text || normalizedQ.questiontext || normalizedQ.title || q.question || q.Question;
         if (!qText) {
           skipCount++;
           skipReasons.push("Missing text or 'question' field");
           continue;
         }
+
+        const imgUrl = normalizedQ.imageurl || normalizedQ.image || normalizedQ.img || q.imageUrl || q.imageUrl || null;
+        let subj = normalizedQ.subject || q.subject || q.Subject || inferredSubject;
 
         // Extract Options: Support both options array or opt1-opt4 properties
         let options: string[] = [];
@@ -778,8 +845,17 @@ export default function AdminDashboard({ userRole }: AdminDashboardProps) {
         if (Array.isArray(q.options)) {
           options = q.options.slice(0, 4).map((o: any) => String(o));
         } else if (q.options && typeof q.options === 'object') {
-          // Support for options as an object mapping, e.g. {"A": "Option 1", "B": "Option 2"}
           options = Object.values(q.options).slice(0, 4).map((o: any) => String(o));
+        } else if (
+          normalizedQ.option1 !== undefined ||
+          normalizedQ.opt1 !== undefined
+        ) {
+          options = [
+            (normalizedQ.option1 !== undefined ? normalizedQ.option1 : normalizedQ.opt1) ? String(normalizedQ.option1 !== undefined ? normalizedQ.option1 : normalizedQ.opt1) : "",
+            (normalizedQ.option2 !== undefined ? normalizedQ.option2 : normalizedQ.opt2) ? String(normalizedQ.option2 !== undefined ? normalizedQ.option2 : normalizedQ.opt2) : "",
+            (normalizedQ.option3 !== undefined ? normalizedQ.option3 : normalizedQ.opt3) ? String(normalizedQ.option3 !== undefined ? normalizedQ.option3 : normalizedQ.opt3) : "",
+            (normalizedQ.option4 !== undefined ? normalizedQ.option4 : normalizedQ.opt4) ? String(normalizedQ.option4 !== undefined ? normalizedQ.option4 : normalizedQ.opt4) : "",
+          ];
         } else if (
           q.opt1 !== undefined ||
           q.opt2 !== undefined
@@ -811,9 +887,9 @@ export default function AdminDashboard({ userRole }: AdminDashboardProps) {
 
         // Extract and normalize correctAnswer
         const rawCorrect =
-          q.correctAnswer !== undefined
-            ? q.correctAnswer
-            : q.correct || q.correct_answer || q.answer;
+          normalizedQ.correctanswer !== undefined
+            ? normalizedQ.correctanswer
+            : normalizedQ.correct !== undefined ? normalizedQ.correct : normalizedQ.answer !== undefined ? normalizedQ.answer : q.correctAnswer !== undefined ? q.correctAnswer : q.correct !== undefined ? q.correct : q.correct_answer !== undefined ? q.correct_answer : q.answer;
         let correctVal = "";
 
         if (rawCorrect !== undefined && rawCorrect !== null) {
@@ -853,13 +929,14 @@ export default function AdminDashboard({ userRole }: AdminDashboardProps) {
         }
 
         // Determine Subject: prefer specific question subject -> root/document subject -> default bulk subject selection
-        const questionSubject = q.subject || inferredSubject;
+        const questionSubject = subj || inferredSubject;
 
         // Generate ID and set document
         const questionId = `q_${Date.now()}_${Math.random().toString(36).substring(7)}`;
         await setDoc(doc(db, "questions", questionId), {
           examId: selectedExamId,
           question: qText,
+          imageUrl: imgUrl || null,
           options: options,
           correctAnswer: correctVal,
           subject: questionSubject,
@@ -871,6 +948,17 @@ export default function AdminDashboard({ userRole }: AdminDashboardProps) {
       if (skipCount > 0) {
         alertMessage += `\nSkipped ${skipCount} questions because of invalid format/properties. Examples of errors:\n- ${Array.from(new Set(skipReasons)).slice(0, 3).join("\n- ")}`;
       }
+      
+      if (successCount > 0) {
+        try {
+          await updateDoc(doc(db, "exams", selectedExamId), {
+             updatedAt: new Date().getTime()
+          });
+        } catch (e) {
+          console.warn("Could not update exam updatedAt status", e);
+        }
+      }
+      
       alert(alertMessage);
       setBulkQuestions("");
     } catch (err: any) {
@@ -923,10 +1011,11 @@ export default function AdminDashboard({ userRole }: AdminDashboardProps) {
     try {
       await updateDoc(doc(db, "questions", editingQuestionId), {
         question: editingQuestionData.question,
+        imageUrl: editingQuestionData.imageUrl || null,
         options: editingQuestionData.options,
         correctAnswer: editingQuestionData.correctAnswer,
       });
-      alert("Question updated successfully!");
+      alert("Question updated successfully! Recalculating scores...");
       setEditingQuestionId(null);
       // Refresh preview questions
       setLoadingPreview(true);
@@ -936,14 +1025,165 @@ export default function AdminDashboard({ userRole }: AdminDashboardProps) {
           where("examId", "==", previewExamId),
         ),
       );
-      setPreviewQuestions(
-        snapshot.docs.map((d) => ({ id: d.id, ...d.data() })),
-      );
+      const updatedQuestions = snapshot.docs.map((d) => ({ id: d.id, ...d.data() as any }));
+      setPreviewQuestions(updatedQuestions);
+      
+      // Recalculate results
+      try {
+        const resultsRef = collection(db, "results");
+        const resultsQ = query(resultsRef, where("examId", "==", previewExamId));
+        const resultsSnapshot = await getDocs(resultsQ);
+        const updatePromises = resultsSnapshot.docs.map(async (resDoc) => {
+          const rData = resDoc.data();
+          if (rData.answers) {
+            let correct = 0;
+            let wrong = 0;
+            const subjectMarks: Record<string, number> = {
+              biology: 0,
+              chemistry: 0,
+              physics: 0,
+              zoology: 0,
+              botany: 0,
+              mat: 0
+            };
+
+            updatedQuestions.forEach(q => {
+              const ans = rData.answers[q.id];
+              const subj = (q.subject || '').toLowerCase().trim();
+              let scoreDelta = 0;
+              if (ans) {
+                if (ans === q.correctAnswer) {
+                   correct += 1;
+                   scoreDelta = 1;
+                } else {
+                   wrong += 1;
+                   scoreDelta = -0.25;
+                }
+              }
+              if (subj === 'zoology' || subj === 'botany' || subj === 'biology') {
+                subjectMarks.biology += scoreDelta;
+                if (subj === 'zoology') subjectMarks.zoology += scoreDelta;
+                else if (subj === 'botany') subjectMarks.botany += scoreDelta;
+              } else if (subj === 'chemistry' || subj === 'chem') {
+                subjectMarks.chemistry += scoreDelta;
+              } else if (subj === 'physics' || subj === 'phys') {
+                subjectMarks.physics += scoreDelta;
+              } else if (subj === 'mat') {
+                subjectMarks.mat += scoreDelta;
+              }
+            });
+
+            const newScore = correct - (wrong * 0.25);
+            return updateDoc(resDoc.ref, {
+               score: isNaN(newScore) ? 0 : Number(newScore),
+               subjectMarks: subjectMarks
+            });
+          }
+        });
+        await Promise.all(updatePromises);
+        console.log("Recalculated all participant scores based on the new question update.");
+        
+        // Update exam's updatedAt timestamp to invalidate client side caches
+        await updateDoc(doc(db, "exams", previewExamId), {
+           updatedAt: new Date().getTime()
+        });
+      } catch (err) {
+        console.error("Failed to recalculate results", err);
+      }
+      
       setLoadingPreview(false);
     } catch (err) {
       console.error("Error updating question", err);
       alert("Failed to update question");
     }
+  };
+
+  const handleDeleteEditedQuestion = async () => {
+    if (!editingQuestionId) return;
+    
+    triggerConfirm(
+      "Delete Question",
+      "Are you sure you want to delete this question? This will permanently remove it.",
+      async () => {
+        try {
+          await deleteDoc(doc(db, "questions", editingQuestionId));
+          alert("Question deleted successfully! Recalculating scores...");
+          setEditingQuestionId(null);
+          // Refresh preview questions
+          setLoadingPreview(true);
+          const snapshot = await getDocs(
+            query(
+              collection(db, "questions"),
+              where("examId", "==", previewExamId),
+            ),
+          );
+          const updatedQuestions = snapshot.docs.map((d) => ({ id: d.id, ...d.data() as any }));
+          setPreviewQuestions(updatedQuestions);
+          
+          // Recalculate results
+          try {
+            const resultsRef = collection(db, "results");
+            const resultsQ = query(resultsRef, where("examId", "==", previewExamId));
+            const resultsSnapshot = await getDocs(resultsQ);
+            const updatePromises = resultsSnapshot.docs.map(async (resDoc) => {
+              const rData = resDoc.data();
+              if (rData.answers) {
+                let correct = 0;
+                let wrong = 0;
+                const subjectMarks: Record<string, number> = {
+                  biology: 0, chemistry: 0, physics: 0, zoology: 0, botany: 0, mat: 0
+                };
+
+                updatedQuestions.forEach(q => {
+                  const ans = rData.answers[q.id];
+                  const subj = (q.subject || '').toLowerCase().trim();
+                  let scoreDelta = 0;
+                  if (ans) {
+                    if (ans === q.correctAnswer) {
+                       correct += 1;
+                       scoreDelta = 1;
+                    } else {
+                       wrong += 1;
+                       scoreDelta = -0.25;
+                    }
+                  }
+                  if (subj === 'zoology' || subj === 'botany' || subj === 'biology') {
+                    subjectMarks.biology += scoreDelta;
+                    if (subj === 'zoology') subjectMarks.zoology += scoreDelta;
+                    else if (subj === 'botany') subjectMarks.botany += scoreDelta;
+                  } else if (subj === 'chemistry' || subj === 'chem') {
+                    subjectMarks.chemistry += scoreDelta;
+                  } else if (subj === 'physics' || subj === 'phys') {
+                    subjectMarks.physics += scoreDelta;
+                  } else if (subj === 'mat') {
+                    subjectMarks.mat += scoreDelta;
+                  }
+                });
+
+                const newScore = correct - (wrong * 0.25);
+                return updateDoc(resDoc.ref, {
+                   score: isNaN(newScore) ? 0 : Number(newScore),
+                   subjectMarks: subjectMarks
+                });
+              }
+            });
+            await Promise.all(updatePromises);
+            console.log("Recalculated all participant scores based on the deleted question.");
+            
+            await updateDoc(doc(db, "exams", previewExamId), {
+               updatedAt: new Date().getTime()
+            });
+          } catch (err) {
+            console.error("Failed to recalculate results", err);
+          }
+          
+          setLoadingPreview(false);
+        } catch (err) {
+          console.error("Error deleting question", err);
+          alert("Failed to delete question");
+        }
+      }
+    );
   };
 
   const handleToggleExamStatus = async (
@@ -1667,8 +1907,11 @@ export default function AdminDashboard({ userRole }: AdminDashboardProps) {
                   {/* Bulk Upload Section */}
                   <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 mb-8">
                     <h3 className="text-lg font-bold text-slate-800 mb-4">
-                      Bulk Upload Questions (JSON)
+                      Bulk Upload Questions (JSON/CSV)
                     </h3>
+                    <p className="text-xs text-slate-500 mb-4">
+                      For CSV, use headers like: <strong>Question, Image URL, Option 1, Option 2, Option 3, Option 4, Correct Answer, Subject</strong>
+                    </p>
                     <form
                       onSubmit={handleBulkAddQuestions}
                       className="space-y-4"
@@ -1787,6 +2030,31 @@ export default function AdminDashboard({ userRole }: AdminDashboardProps) {
 
                       <div>
                         <label className="block text-sm font-medium text-slate-700 mb-1">
+                          Question Image (Optional)
+                        </label>
+                        {newQuestion.imageUrl ? (
+                          <div className="relative mb-4 inline-block">
+                            <img src={newQuestion.imageUrl} alt="Preview" className="max-h-32 rounded border border-slate-200" />
+                            <button
+                              type="button"
+                              onClick={() => setNewQuestion({...newQuestion, imageUrl: ""})}
+                              className="absolute top-1 right-1 bg-white text-rose-500 hover:text-rose-700 rounded-full p-1 shadow"
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                            </button>
+                          </div>
+                        ) : (
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={(e) => handleLocalImageUpload(e, (base64) => setNewQuestion({ ...newQuestion, imageUrl: base64 }))}
+                            className="w-full px-3 py-2 border rounded-md mb-4 bg-white"
+                          />
+                        )}
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">
                           Question Text
                         </label>
                         <textarea
@@ -1807,8 +2075,7 @@ export default function AdminDashboard({ userRole }: AdminDashboardProps) {
                           <label className="block text-sm font-medium text-slate-700 mb-1">
                             Option 1
                           </label>
-                          <input
-                            type="text"
+                          <textarea
                             required
                             value={newQuestion.opt1}
                             onChange={(e) =>
@@ -1817,15 +2084,14 @@ export default function AdminDashboard({ userRole }: AdminDashboardProps) {
                                 opt1: e.target.value,
                               })
                             }
-                            className="w-full px-3 py-2 border rounded-md"
-                          />
+                            className="w-full px-3 py-2 border rounded-md whitespace-pre-wrap"
+                          ></textarea>
                         </div>
                         <div>
                           <label className="block text-sm font-medium text-slate-700 mb-1">
                             Option 2
                           </label>
-                          <input
-                            type="text"
+                          <textarea
                             required
                             value={newQuestion.opt2}
                             onChange={(e) =>
@@ -1834,15 +2100,14 @@ export default function AdminDashboard({ userRole }: AdminDashboardProps) {
                                 opt2: e.target.value,
                               })
                             }
-                            className="w-full px-3 py-2 border rounded-md"
-                          />
+                            className="w-full px-3 py-2 border rounded-md whitespace-pre-wrap"
+                          ></textarea>
                         </div>
                         <div>
                           <label className="block text-sm font-medium text-slate-700 mb-1">
                             Option 3
                           </label>
-                          <input
-                            type="text"
+                          <textarea
                             required
                             value={newQuestion.opt3}
                             onChange={(e) =>
@@ -1851,15 +2116,14 @@ export default function AdminDashboard({ userRole }: AdminDashboardProps) {
                                 opt3: e.target.value,
                               })
                             }
-                            className="w-full px-3 py-2 border rounded-md"
-                          />
+                            className="w-full px-3 py-2 border rounded-md whitespace-pre-wrap"
+                          ></textarea>
                         </div>
                         <div>
                           <label className="block text-sm font-medium text-slate-700 mb-1">
                             Option 4
                           </label>
-                          <input
-                            type="text"
+                          <textarea
                             required
                             value={newQuestion.opt4}
                             onChange={(e) =>
@@ -1868,8 +2132,8 @@ export default function AdminDashboard({ userRole }: AdminDashboardProps) {
                                 opt4: e.target.value,
                               })
                             }
-                            className="w-full px-3 py-2 border rounded-md"
-                          />
+                            className="w-full px-3 py-2 border rounded-md whitespace-pre-wrap"
+                          ></textarea>
                         </div>
                       </div>
 
@@ -1952,6 +2216,30 @@ export default function AdminDashboard({ userRole }: AdminDashboardProps) {
                                 <div className="space-y-4">
                                   <div>
                                     <label className="block text-sm font-medium text-slate-700">
+                                      Question Image (Optional)
+                                    </label>
+                                    {editingQuestionData.imageUrl ? (
+                                      <div className="relative mb-2 inline-block">
+                                        <img src={editingQuestionData.imageUrl} alt="Preview" className="max-h-32 rounded border border-slate-200" />
+                                        <button
+                                          type="button"
+                                          onClick={() => setEditingQuestionData({...editingQuestionData, imageUrl: ""})}
+                                          className="absolute top-1 right-1 bg-white text-rose-500 hover:text-rose-700 rounded-full p-1 shadow"
+                                        >
+                                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <input
+                                        type="file"
+                                        accept="image/*"
+                                        onChange={(e) => handleLocalImageUpload(e, (base64) => setEditingQuestionData({ ...editingQuestionData, imageUrl: base64 }))}
+                                        className="w-full px-3 py-2 border rounded-md bg-white"
+                                      />
+                                    )}
+                                  </div>
+                                  <div>
+                                    <label className="block text-sm font-medium text-slate-700">
                                       Question Text
                                     </label>
                                     <textarea
@@ -1963,7 +2251,7 @@ export default function AdminDashboard({ userRole }: AdminDashboardProps) {
                                         })
                                       }
                                       rows={3}
-                                      className="w-full px-3 py-2 border rounded-md"
+                                      className="w-full px-3 py-2 border rounded-md whitespace-pre-wrap"
                                     />
                                   </div>
                                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1974,8 +2262,7 @@ export default function AdminDashboard({ userRole }: AdminDashboardProps) {
                                             Option{" "}
                                             {String.fromCharCode(65 + optIdx)}
                                           </label>
-                                          <input
-                                            type="text"
+                                          <textarea
                                             value={opt}
                                             onChange={(e) => {
                                               const newOptions = [
@@ -1999,8 +2286,8 @@ export default function AdminDashboard({ userRole }: AdminDashboardProps) {
                                                 correctAnswer: newCorrect,
                                               });
                                             }}
-                                            className="w-full px-3 py-2 border rounded-md text-sm"
-                                          />
+                                            className="w-full px-3 py-2 border rounded-md text-sm whitespace-pre-wrap"
+                                          ></textarea>
                                         </div>
                                       ),
                                     )}
@@ -2030,19 +2317,30 @@ export default function AdminDashboard({ userRole }: AdminDashboardProps) {
                                       )}
                                     </select>
                                   </div>
-                                  <div className="flex justify-end gap-2 mt-4">
+                                  <div className="flex justify-between items-center mt-4">
                                     <button
-                                      onClick={() => setEditingQuestionId(null)}
-                                      className="px-4 py-2 bg-slate-200 text-slate-700 font-medium rounded-md hover:bg-slate-300 transition-colors"
+                                      type="button"
+                                      onClick={handleDeleteEditedQuestion}
+                                      className="px-4 py-2 bg-red-50 text-red-600 font-medium rounded-md hover:bg-red-100 transition-colors border border-red-200"
                                     >
-                                      Cancel
+                                      Delete Question
                                     </button>
-                                    <button
-                                      onClick={handleSaveEditedQuestion}
-                                      className="px-4 py-2 bg-blue-600 text-white font-medium rounded-md hover:bg-blue-700 transition-colors"
-                                    >
-                                      Save Question
-                                    </button>
+                                    <div className="flex gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => setEditingQuestionId(null)}
+                                        className="px-4 py-2 bg-slate-200 text-slate-700 font-medium rounded-md hover:bg-slate-300 transition-colors"
+                                      >
+                                        Cancel
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={handleSaveEditedQuestion}
+                                        className="px-4 py-2 bg-blue-600 text-white font-medium rounded-md hover:bg-blue-700 transition-colors"
+                                      >
+                                        Save Question
+                                      </button>
+                                    </div>
                                   </div>
                                 </div>
                               ) : (
@@ -2058,19 +2356,24 @@ export default function AdminDashboard({ userRole }: AdminDashboardProps) {
                                       Edit
                                     </button>
                                   </div>
-                                  <div className="font-medium text-slate-900 mb-3 pr-16">
+                                  <div className="font-medium text-slate-900 mb-3 pr-16 whitespace-pre-wrap">
                                     <span className="text-slate-500 mr-2">
                                       Q{idx + 1}.
                                     </span>
                                     {q.question}
                                   </div>
+                                  {q.imageUrl && (
+                                    <div className="ml-6 mb-3">
+                                      <img src={q.imageUrl} alt="Question Visual" className="max-w-xs rounded-md shadow-sm border border-slate-200" />
+                                    </div>
+                                  )}
                                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm ml-6">
                                     {q.options &&
                                       q.options.map(
                                         (opt: string, i: number) => (
                                           <div
                                             key={i}
-                                            className={`p-2 rounded-md border ${q.correctAnswer === opt ? "bg-green-100 border-green-300 font-semibold" : "bg-white border-slate-200"} text-slate-700`}
+                                            className={`p-2 rounded-md border whitespace-pre-wrap ${q.correctAnswer === opt ? "bg-green-100 border-green-300 font-semibold" : "bg-white border-slate-200"} text-slate-700`}
                                           >
                                             {String.fromCharCode(65 + i)}. {opt}
                                           </div>
