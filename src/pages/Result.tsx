@@ -418,3 +418,4 @@ export default function Result({ user, isAdmin }: ResultProps) {
     </div>
   );
 }
+
