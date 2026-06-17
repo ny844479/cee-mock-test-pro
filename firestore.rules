@@ -106,6 +106,12 @@ service cloud.firestore {
       allow delete: if isStaff();
     }
     
+    match /transaction_codes/{txId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update: if false;
+    }
+    
     function isValidPayment(data) {
        return data.keys().hasAll(['studentId', 'examId', 'transactionId', 'status']) &&
               data.studentId is string && data.studentId.size() <= 128 &&
@@ -117,7 +123,7 @@ service cloud.firestore {
     match /payments/{paymentId} {
       allow read: if isSignedIn() && (resource.data.studentId == request.auth.uid || isStaff());
       allow create: if isSignedIn() && (
-                      (incoming().studentId == request.auth.uid && isValidPayment(incoming()) && incoming().status == 'pending') ||
+                      (incoming().studentId == request.auth.uid && isValidPayment(incoming()) && incoming().status in ['pending', 'approved', 'rejected']) ||
                       isStaff()
                     );
       allow update: if isAdmin() || (isCoAdmin() && (incoming().status != 'rejected'));
