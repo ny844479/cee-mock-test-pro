@@ -146,7 +146,8 @@ export default function Payment({ user }: PaymentProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!transactionId.trim()) {
+    const cleanTransactionId = transactionId.trim();
+    if (!cleanTransactionId) {
       setError("Please enter a valid Transaction ID");
       return;
     }
@@ -158,16 +159,94 @@ export default function Payment({ user }: PaymentProps) {
     setError('');
 
     try {
+      // 1. Check for duplicate transaction globally
+      const txDocRef = doc(db, 'transaction_codes', cleanTransactionId);
+      const txDoc = await getDoc(txDocRef);
+      if (txDoc.exists()) {
+        setError("This transaction code has already been used.");
+        setLoading(false);
+        return;
+      }
+
+      // 2. Perform automated verification via Gemini Vision API
+      let finalStatus = 'pending'; // Default to pending if auto-verify isn't conclusive
+      try {
+        const response = await fetch('/api/analyze-receipt', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            imageBase64: screenshot,
+            paymentMethod: paymentMethod,
+            paymentNumber: paymentNumber,
+            expectedAmount: parseFloat(exam.price)
+          }),
+        });
+        
+        if (response.ok) {
+          const analysis = await response.json();
+          const extractedTxId = (analysis.transactionId || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+          const userTxId = cleanTransactionId.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+           
+          const extractedAmountStr = String(analysis.amount || "").replace(/[^0-9.]/g, "");
+          const extractedAmount = parseFloat(extractedAmountStr);
+          const requiredAmount = parseFloat(exam.price);
+
+          const receiverText = String(analysis.receiverInfo || "").toLowerCase();
+          
+          // Dynamic Receiver Checks
+          const cleanAdminNum = paymentNumber.replace(/\s+/g, "");
+          const matchesReceiver = 
+            receiverText.includes("nikhil") || 
+            receiverText.includes("yadav") || 
+            (cleanAdminNum && receiverText.includes(cleanAdminNum)) ||
+            (paymentMethod && receiverText.includes(paymentMethod.toLowerCase()));
+
+          // We mark as approved ONLY if all conditions match strictly
+          if (extractedTxId === userTxId && !isNaN(extractedAmount) && extractedAmount >= requiredAmount && matchesReceiver) {
+             finalStatus = 'approved';
+          } else {
+             // If the amount is less or any discrepancy, leave it as pending for manual review
+             // The prompt requests "unverified by itself" if the amount is less. We can set it to 'rejected' or 'pending'.
+             // We use 'pending' so admins can still manually verify if AI failed.
+             finalStatus = 'pending';
+             if (extractedAmount < requiredAmount && matchesReceiver && extractedTxId === userTxId) {
+                 finalStatus = 'rejected'; // Auto-reject if clearly underpaid
+             }
+          }
+        }
+      } catch (analyzeErr) {
+        console.warn("Auto verification failed (AI error), falling back to pending:", analyzeErr);
+      }
+
       const paymentId = `${user.uid}_${examId}`;
-      await setDoc(doc(db, 'payments', paymentId), {
+      const paymentData = {
         studentId: user.uid,
         examId: examId,
-        transactionId: transactionId.trim(),
+        transactionId: cleanTransactionId,
         screenshot: screenshot,
         paymentMethod: paymentMethod,
-        status: 'pending',
+        status: finalStatus,
         submittedAt: new Date().toISOString()
+      };
+
+      // 3. Mark the transaction code as used FIRST
+      await setDoc(txDocRef, {
+        usedBy: user.uid,
+        examId: examId,
+        timestamp: new Date().toISOString()
       });
+
+      // 4. Save payment record
+      await setDoc(doc(db, 'payments', paymentId), paymentData);
+
+      if (finalStatus === 'approved') {
+        alert("Your payment was auto-verified successfully!");
+      } else if (finalStatus === 'rejected') {
+        alert("Your payment was rejected (insufficient amount).");
+      } else {
+        alert("Payment submitted. Pending manual verification by admin.");
+      }
+      
       navigate('/dashboard');
     } catch (err: any) {
       console.error(err);
