@@ -61,18 +61,34 @@ export default function StudentDashboard({ user, isVerified = true }: StudentDas
     async function fetchData() {
       try {
         // Fetch exams
-        const examsQuery = query(collection(db, "exams"));
-        const examsSnapshot = await getDocs(examsQuery);
-        const examsData = examsSnapshot.docs
-          .map((doc) => ({ id: doc.id, ...doc.data() }))
-          .filter(
-            (exam) =>
-              exam.id !== "whatsapp" &&
-              exam.id !== "landing" &&
-              exam.id !== "payment" &&
-              exam.id !== "instructions",
-          );
-        setExams(examsData as any);
+        const EXAMS_CACHE_KEY = "student_exams_cache";
+        const CACHE_EXPIRY = 5 * 60 * 1000; // 5 minutes
+        const now = new Date().getTime();
+        
+        let examsData: any[] = [];
+        const examsCacheStr = localStorage.getItem(EXAMS_CACHE_KEY);
+        const examsCache = examsCacheStr ? JSON.parse(examsCacheStr) : null;
+        
+        if (examsCache && examsCache.timestamp && (now - examsCache.timestamp < CACHE_EXPIRY)) {
+          examsData = examsCache.data;
+        } else {
+          const examsQuery = query(collection(db, "exams"));
+          const examsSnapshot = await getDocs(examsQuery);
+          examsData = examsSnapshot.docs
+            .map((doc) => ({ id: doc.id, ...doc.data() }))
+            .filter(
+              (exam) =>
+                exam.id !== "whatsapp" &&
+                exam.id !== "landing" &&
+                exam.id !== "payment" &&
+                exam.id !== "instructions",
+            );
+          localStorage.setItem(EXAMS_CACHE_KEY, JSON.stringify({
+            timestamp: now,
+            data: examsData
+          }));
+        }
+        setExams(examsData);
 
         // Fetch payments for this student
         const paymentsQuery = query(
@@ -101,53 +117,68 @@ export default function StudentDashboard({ user, isVerified = true }: StudentDas
         // Fetch WhatsApp Settings Notice configurations
         try {
           let noticeData: any = null;
-
-          // First attempt exams/whatsapp configuration (guaranteed to be readable & writeable)
-          try {
-            const docRef = doc(db, "exams", "whatsapp");
-            const docSnap = await getDoc(docRef);
-            if (docSnap.exists()) {
-              const data = docSnap.data();
-              noticeData = {
-                isActive: data.isActive === true, // Check if explicitly turned on by admin
-                title: data.title || "CEE Mock Test Pro Notice",
-                noticeBody:
-                  data.noticeBody ||
-                  "Attention Students: All tournament prizes for this mock test season will be distributed exclusively through the official WhatsApp group. Click the join link to stay eligible and receive direct updates.",
-                whatsappLink: data.whatsappLink || data.link || "",
-                buttonText: data.buttonText || "Join WhatsApp Group",
-              };
-            }
-          } catch (examsNoticeErr) {
-            console.log(
-              "Could not fetch notice from exams/whatsapp directly",
-              examsNoticeErr,
-            );
-          }
-
-          // Back fallback to settings/whatsapp
-          if (!noticeData) {
+          
+          const NOTICE_CACHE_KEY = "student_settings_notice";
+          const CACHE_EXPIRY = 30 * 60 * 1000; // 30 minutes
+          const noticeCacheStr = localStorage.getItem(NOTICE_CACHE_KEY);
+          const noticeCache = noticeCacheStr ? JSON.parse(noticeCacheStr) : null;
+          if (noticeCache && noticeCache.timestamp && (now - noticeCache.timestamp < CACHE_EXPIRY)) {
+            noticeData = noticeCache.data;
+          } else {
+            // First attempt exams/whatsapp configuration (guaranteed to be readable & writeable)
             try {
-              const docRef = doc(db, "settings", "whatsapp");
+              const docRef = doc(db, "exams", "whatsapp");
               const docSnap = await getDoc(docRef);
               if (docSnap.exists()) {
                 const data = docSnap.data();
                 noticeData = {
-                  isActive: data.isActive !== false,
-                  title:
-                    data.title || "CEE Mock Test Pro Notice",
+                  isActive: data.isActive === true, // Check if explicitly turned on by admin
+                  title: data.title || "CEE Mock Test Pro Notice",
                   noticeBody:
                     data.noticeBody ||
                     "Attention Students: All tournament prizes for this mock test season will be distributed exclusively through the official WhatsApp group. Click the join link to stay eligible and receive direct updates.",
-                  whatsappLink: data.link || data.whatsappLink || "",
+                  whatsappLink: data.whatsappLink || data.link || "",
                   buttonText: data.buttonText || "Join WhatsApp Group",
                 };
               }
-            } catch (settingsErr) {
+            } catch (examsNoticeErr) {
               console.log(
-                "Could not fetch settings/whatsapp fallback:",
-                settingsErr,
+                "Could not fetch notice from exams/whatsapp directly",
+                examsNoticeErr,
               );
+            }
+
+            // Back fallback to settings/whatsapp
+            if (!noticeData) {
+              try {
+                const docRef = doc(db, "settings", "whatsapp");
+                const docSnap = await getDoc(docRef);
+                if (docSnap.exists()) {
+                  const data = docSnap.data();
+                  noticeData = {
+                    isActive: data.isActive !== false,
+                    title:
+                      data.title || "CEE Mock Test Pro Notice",
+                    noticeBody:
+                      data.noticeBody ||
+                      "Attention Students: All tournament prizes for this mock test season will be distributed exclusively through the official WhatsApp group. Click the join link to stay eligible and receive direct updates.",
+                    whatsappLink: data.link || data.whatsappLink || "",
+                    buttonText: data.buttonText || "Join WhatsApp Group",
+                  };
+                }
+              } catch (settingsErr) {
+                console.log(
+                  "Could not fetch settings/whatsapp fallback:",
+                  settingsErr,
+                );
+              }
+            }
+            
+            if (noticeData) {
+              localStorage.setItem(NOTICE_CACHE_KEY, JSON.stringify({
+                timestamp: now,
+                data: noticeData
+              }));
             }
           }
 
@@ -155,21 +186,32 @@ export default function StudentDashboard({ user, isVerified = true }: StudentDas
 
           // Fetch instructions
           let instrData: any[] = [];
-          try {
-            const docRef = doc(db, "exams", "instructions");
-            const docSnap = await getDoc(docRef);
-            if (docSnap.exists()) {
-              instrData = docSnap.data().steps || [];
-            } else {
-              // try settings
-              const setRef = doc(db, "settings", "instructions");
-              const setSnap = await getDoc(setRef);
-              if (setSnap.exists()) {
-                instrData = setSnap.data().steps || [];
+          const INST_CACHE_KEY = "student_settings_instructions";
+          const instCacheStr = localStorage.getItem(INST_CACHE_KEY);
+          const instCache = instCacheStr ? JSON.parse(instCacheStr) : null;
+          if (instCache && instCache.timestamp && (now - instCache.timestamp < CACHE_EXPIRY)) {
+            instrData = instCache.data;
+          } else {
+            try {
+              const docRef = doc(db, "exams", "instructions");
+              const docSnap = await getDoc(docRef);
+              if (docSnap.exists()) {
+                instrData = docSnap.data().steps || [];
+              } else {
+                // try settings
+                const setRef = doc(db, "settings", "instructions");
+                const setSnap = await getDoc(setRef);
+                if (setSnap.exists()) {
+                  instrData = setSnap.data().steps || [];
+                }
               }
+              localStorage.setItem(INST_CACHE_KEY, JSON.stringify({
+                timestamp: now,
+                data: instrData
+              }));
+            } catch (e) {
+              console.warn("Could not load exam instructions:", e);
             }
-          } catch (e) {
-            console.warn("Could not load exam instructions:", e);
           }
           setInstructions(instrData);
         } catch (err) {
