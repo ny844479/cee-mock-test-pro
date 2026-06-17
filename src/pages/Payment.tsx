@@ -142,14 +142,10 @@ export default function Payment({ user }: PaymentProps) {
     reader.readAsDataURL(file);
   };
 
-  const isPaymentLocked = exam?.startTime && (new Date(exam.startTime).getTime() - Date.now()) < 10 * 60 * 1000;
+  const isPaymentLocked = false;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (isPaymentLocked) {
-      setError("This exam is locked for payment because it starts in less than 10 minutes.");
-      return;
-    }
     if (!transactionId.trim()) {
       setError("Please enter a valid Transaction ID");
       return;
