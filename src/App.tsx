@@ -66,7 +66,17 @@ export default function App() {
               const fbVerified = currentUser.emailVerified;
               const dbVerified = userDoc.data().emailVerified;
               
-              if (fbVerified && !dbVerified) {
+              let isAutoVerify = true;
+              try {
+                const genSettings = await getDoc(doc(db, "settings", "general"));
+                if (genSettings.exists()) {
+                  isAutoVerify = genSettings.data().autoVerification !== false;
+                }
+              } catch (e) {
+                console.warn("Could not read verification generic", e);
+              }
+
+              if (fbVerified && !dbVerified && isAutoVerify) {
                 await updateDoc(userDocRef, { emailVerified: true });
                 setIsVerified(true);
               } else if (dbVerified) {
