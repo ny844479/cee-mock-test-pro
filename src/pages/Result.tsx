@@ -19,6 +19,7 @@ export default function Result({ user, isAdmin }: ResultProps) {
   const [questions, setQuestions] = useState<any[]>([]);
   const [exam, setExam] = useState<any>(null);
   const [filterTab, setFilterTab] = useState<'all' | 'correct' | 'incorrect' | 'unattempted'>('all');
+  const [enlargedImage, setEnlargedImage] = useState<string | null>(null);
 
   useEffect(() => {
     async function fetchResult() {
@@ -86,7 +87,12 @@ export default function Result({ user, isAdmin }: ResultProps) {
         const CACHE_EXPIRY = 12 * 60 * 60 * 1000; // 12 hours cache
         const now = new Date();
         
-        if (qCache && qCache.timestamp && (now.getTime() - qCache.timestamp < CACHE_EXPIRY)) {
+        let isQCacheValid = qCache && qCache.timestamp && (now.getTime() - qCache.timestamp < CACHE_EXPIRY);
+        if (isQCacheValid && examData && examData.updatedAt && qCache.timestamp < examData.updatedAt) {
+          isQCacheValid = false;
+        }
+
+        if (isQCacheValid) {
           qList = qCache.data;
         } else {
           const qDocs = await getDocs(query(collection(db, 'questions'), where('examId', '==', rData.examId)));
@@ -114,7 +120,12 @@ export default function Result({ user, isAdmin }: ResultProps) {
           const now = new Date().getTime();
           
           let allResults = [];
-          if (cache && cache.timestamp && (now - cache.timestamp < CACHE_EXPIRY)) {
+          let isLeaderboardValid = cache && cache.timestamp && (now - cache.timestamp < CACHE_EXPIRY);
+          if (isLeaderboardValid && examData && examData.updatedAt && cache.timestamp < examData.updatedAt) {
+            isLeaderboardValid = false;
+          }
+
+          if (isLeaderboardValid) {
             allResults = cache.data;
           } else {
             const q = query(collection(db, 'results'), where('examId', '==', rData.examId));
@@ -325,8 +336,17 @@ export default function Result({ user, isAdmin }: ResultProps) {
 
                   <h3 className="text-base font-bold text-slate-900 mb-4 flex gap-2">
                     <span className="text-slate-400 font-normal">Q{originalIndex}.</span>
-                    <span>{q.question}</span>
+                    <span className="whitespace-pre-wrap leading-relaxed">{q.question}</span>
                   </h3>
+
+                  {q.imageUrl && (
+                    <div className="mb-5 relative group w-fit cursor-pointer" onClick={() => setEnlargedImage(q.imageUrl)}>
+                      <img src={q.imageUrl} alt="Question Visual" className="max-w-full rounded-md shadow-sm border border-slate-200 transition-all group-hover:opacity-90" style={{ maxHeight: '300px' }} />
+                      <div className="absolute inset-0 bg-black/5 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity rounded-md">
+                        <span className="bg-slate-900/80 text-white text-xs px-2 py-1 rounded shadow-sm backdrop-blur-sm">Click to Enlarge</span>
+                      </div>
+                    </div>
+                  )}
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
                     {q.options && q.options.map((opt: string, optIdx: number) => {
@@ -334,24 +354,24 @@ export default function Result({ user, isAdmin }: ResultProps) {
                       const isChosenOption = opt === chosen;
 
                       let borderStyle = "border-slate-200";
-                      let bgStyle = "bg-white text-slate-755";
+                      let bgStyle = "bg-white text-slate-750";
                       let indicator = null;
 
                       if (isCorrectOption) {
                         borderStyle = "border-emerald-500 font-semibold";
                         bgStyle = "bg-emerald-50 text-emerald-950";
-                        indicator = <span className="text-[10px] bg-emerald-600 text-white font-bold px-1.5 py-0.5 rounded uppercase">Correct Option</span>;
+                        indicator = <span className="text-[10px] bg-emerald-600 text-white font-bold px-1.5 py-0.5 rounded uppercase mt-2 w-fit">Correct Option</span>;
                       } else if (isChosenOption) {
                         borderStyle = "border-rose-500 font-semibold";
                         bgStyle = "bg-rose-50 text-rose-950";
-                        indicator = <span className="text-[10px] bg-rose-600 text-white font-bold px-1.5 py-0.5 rounded uppercase font-semibold">Your Selected Option</span>;
+                        indicator = <span className="text-[10px] bg-rose-600 text-white font-bold px-1.5 py-0.5 rounded uppercase font-semibold mt-2 w-fit">Your Selection</span>;
                       }
 
                       return (
-                        <div key={optIdx} className={`border rounded-lg p-3 flex justify-between items-center text-sm transition-all sm:py-3.5 sm:px-4 ${borderStyle} ${bgStyle}`}>
+                        <div key={optIdx} className={`border rounded-lg p-3 flex flex-col justify-center items-start text-sm transition-all sm:py-3.5 sm:px-4 ${borderStyle} ${bgStyle}`}>
                           <div className="flex gap-2">
                             <span className="font-bold text-slate-400 mr-1">{String.fromCharCode(65 + optIdx)}.</span>
-                            <span>{opt}</span>
+                            <span className="whitespace-pre-wrap leading-relaxed">{opt}</span>
                           </div>
                           {indicator}
                         </div>
@@ -373,7 +393,28 @@ export default function Result({ user, isAdmin }: ResultProps) {
           Dashboard Home
         </Link>
       </div>
+
+      {enlargedImage && (
+        <div 
+          className="fixed inset-0 z-[120] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 sm:p-8 cursor-zoom-out"
+          onClick={() => setEnlargedImage(null)}
+        >
+          <div className="relative max-w-screen-xl max-h-screen">
+            <img 
+              src={enlargedImage} 
+              alt="Enlarged Question Visual" 
+              className="max-w-full max-h-[90vh] object-contain rounded shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            />
+            <button 
+              onClick={() => setEnlargedImage(null)}
+              className="absolute -top-4 -right-4 sm:-top-6 sm:-right-6 bg-white/10 hover:bg-white/20 text-white rounded-full p-2 backdrop-blur-md transition-colors"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
-
