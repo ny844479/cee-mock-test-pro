@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { createUserWithEmailAndPassword, sendEmailVerification } from 'firebase/auth';
-import { doc, setDoc } from 'firebase/firestore';
+import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { Link, useNavigate } from 'react-router-dom';
 import { Eye, EyeOff } from 'lucide-react';
@@ -20,6 +20,16 @@ export default function Register() {
     setLoading(true);
 
     try {
+      let isAutoVerify = true;
+      try {
+        const genSettings = await getDoc(doc(db, "settings", "general"));
+        if (genSettings.exists()) {
+          isAutoVerify = genSettings.data().autoVerification !== false;
+        }
+      } catch (err) {
+        console.warn("Could not read autoVerification setting, defaulting to true", err);
+      }
+
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
       
@@ -33,10 +43,12 @@ export default function Register() {
         email,
         studentId,
         role: 'student',
-        emailVerified: false
+        emailVerified: isAutoVerify
       });
       
-      await sendEmailVerification(user);
+      if (!isAutoVerify) {
+        await sendEmailVerification(user);
+      }
       
       navigate('/');
     } catch (err: any) {
