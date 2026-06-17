@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { User, signOut, updateEmail, updatePassword } from 'firebase/auth';
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { useNavigate, Link } from 'react-router-dom';
 import { User as UserIcon, Mail, Phone, Shield, LogOut, CheckCircle, AlertCircle, Save, ArrowLeft, Smartphone, Laptop, Eye, EyeOff } from 'lucide-react';
@@ -148,6 +148,16 @@ export default function Profile({ user, userRole }: ProfileProps) {
       }
 
       await updateDoc(userDocRef, updateData);
+
+      // 3. Keep results in sync with new name
+      try {
+        const resultsQuery = query(collection(db, 'results'), where('studentId', '==', user.uid));
+        const qs = await getDocs(resultsQuery);
+        const updates = qs.docs.map(d => updateDoc(doc(db, 'results', d.id), { studentName: name.trim().substring(0, 95) }));
+        await Promise.all(updates);
+      } catch (e) {
+        console.error("Failed to sync name to results", e);
+      }
 
       setSuccessMsg('Your profile has been updated successfully.');
       setTimeout(() => setSuccessMsg(null), 5000);
