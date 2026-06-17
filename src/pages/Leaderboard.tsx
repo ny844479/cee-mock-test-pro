@@ -351,3 +351,4 @@ export default function Leaderboard({ user }: LeaderboardProps) {
     </div>
   );
 }
+
