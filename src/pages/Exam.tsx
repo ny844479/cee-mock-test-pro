@@ -24,6 +24,7 @@ export default function Exam({ user }: ExamProps) {
   const [examAlertMsg, setExamAlertMsg] = useState<string | null>(null);
   const [showViolationMsg, setShowViolationMsg] = useState<string | null>(null);
   const [submitErrorMsg, setSubmitErrorMsg] = useState<string | null>(null);
+  const [enlargedImage, setEnlargedImage] = useState<string | null>(null);
 
   useEffect(() => {
     async function initExam() {
@@ -76,7 +77,12 @@ export default function Exam({ user }: ExamProps) {
         let qData: any[] = [];
         const CACHE_EXPIRY = 12 * 60 * 60 * 1000; // 12 hours cache
         
-        if (qCache && qCache.timestamp && (now.getTime() - qCache.timestamp < CACHE_EXPIRY)) {
+        let isCacheValid = qCache && qCache.timestamp && (now.getTime() - qCache.timestamp < CACHE_EXPIRY);
+        if (isCacheValid && examData.updatedAt && qCache.timestamp < examData.updatedAt) {
+           isCacheValid = false; // invalidate because questions changed
+        }
+        
+        if (isCacheValid) {
           qData = qCache.data;
         } else {
           const qSnapshot = await getDocs(query(collection(db, 'questions'), where('examId', '==', examId)));
@@ -158,7 +164,15 @@ export default function Exam({ user }: ExamProps) {
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.hidden) {
-        handleSubmitAndLock(); // auto submit on tab change immediately
+        setViolationCount(prev => {
+          const newCount = prev + 1;
+          if (newCount >= 3) {
+             handleSubmitAndLock(); // auto submit on 3rd violation
+          } else {
+             setShowViolationMsg(`Warning: You switched tabs or your screen turned off! (${newCount}/3 violations). The exam will auto-submit on 3rd violation.`);
+          }
+          return newCount;
+        });
       }
     };
 
@@ -482,6 +496,14 @@ export default function Exam({ user }: ExamProps) {
                     {q.subject}
                   </span>
                   <p className="text-lg text-slate-800 font-medium whitespace-pre-wrap">{q.question}</p>
+                  {q.imageUrl && (
+                    <div className="mt-3 relative group w-fit cursor-pointer" onClick={() => setEnlargedImage(q.imageUrl)}>
+                      <img src={q.imageUrl} alt="Question Visual" className="max-w-full rounded-md shadow-sm border border-slate-200 transition-all group-hover:opacity-90" style={{ maxHeight: '300px' }} />
+                      <div className="absolute inset-0 bg-black/5 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity rounded-md">
+                        <span className="bg-slate-900/80 text-white text-xs px-2 py-1 rounded shadow-sm backdrop-blur-sm">Click to Enlarge</span>
+                      </div>
+                    </div>
+                  )}
                   <div className="mt-5 space-y-3">
                     {q.options.map((opt: string, optIdx: number) => (
                       <label 
@@ -600,6 +622,28 @@ export default function Exam({ user }: ExamProps) {
               className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-medium rounded-md transition-colors"
             >
               Close
+            </button>
+          </div>
+        </div>
+      )}
+
+      {enlargedImage && (
+        <div 
+          className="fixed inset-0 z-[120] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 sm:p-8 cursor-zoom-out"
+          onClick={() => setEnlargedImage(null)}
+        >
+          <div className="relative max-w-screen-xl max-h-screen">
+            <img 
+              src={enlargedImage} 
+              alt="Enlarged Question Visual" 
+              className="max-w-full max-h-[90vh] object-contain rounded shadow-2xl"
+              onClick={(e) => e.stopPropagation()} // Prevent clicking image from closing if they drag it (optional)
+            />
+            <button 
+              onClick={() => setEnlargedImage(null)}
+              className="absolute -top-4 -right-4 sm:-top-6 sm:-right-6 bg-white/10 hover:bg-white/20 text-white rounded-full p-2 backdrop-blur-md transition-colors"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
             </button>
           </div>
         </div>
