@@ -41,6 +41,8 @@ export default function AdminDashboard({ userRole }: AdminDashboardProps) {
   const [loading, setLoading] = useState(true);
   const [usersSearchQuery, setUsersSearchQuery] = useState("");
 
+  const [autoVerifyNewUsers, setAutoVerifyNewUsers] = useState<boolean>(true);
+
   // New Exam Form State
   const [newExam, setNewExam] = useState({
     title: "",
@@ -152,6 +154,20 @@ export default function AdminDashboard({ userRole }: AdminDashboardProps) {
     fetchData();
   }, [activeTab]);
 
+  const handleToggleAutoVerification = async () => {
+    const newVal = !autoVerifyNewUsers;
+    try {
+      await setDoc(doc(db, "settings", "general"), {
+        autoVerification: newVal
+      }, { merge: true });
+      setAutoVerifyNewUsers(newVal);
+      // It is a settings change, we don't need to re-fetch anything
+    } catch (e) {
+      console.error("Error setting autoVerification", e);
+      alert("Failed to update auto-verification settings");
+    }
+  };
+
   const handleUpdateStudentId = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingStudent) return;
@@ -257,11 +273,17 @@ export default function AdminDashboard({ userRole }: AdminDashboardProps) {
         );
       }
       if (activeTab === "users") {
-        const [usersSnap, examsSnap] = await Promise.all([
+        const [usersSnap, examsSnap, genSnap] = await Promise.all([
           getDocs(query(collection(db, "users"))),
           getDocs(query(collection(db, "exams"))),
+          getDoc(doc(db, "settings", "general"))
         ]);
         setUsers(usersSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
+        if (genSnap.exists()) {
+          setAutoVerifyNewUsers(genSnap.data().autoVerification !== false);
+        } else {
+          setAutoVerifyNewUsers(true);
+        }
         setExams(
           examsSnap.docs
             .map((doc) => ({ id: doc.id, ...doc.data() }))
@@ -2090,13 +2112,16 @@ export default function AdminDashboard({ userRole }: AdminDashboardProps) {
                       <thead className="bg-slate-50">
                         <tr>
                           <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">
+                            S.N.
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">
                             Student / Exam
                           </th>
                           <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">
-                            Screenshot
+                            Transaction ID
                           </th>
                           <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">
-                            Transaction ID
+                            Screenshot
                           </th>
                           <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">
                             Status
@@ -2110,7 +2135,7 @@ export default function AdminDashboard({ userRole }: AdminDashboardProps) {
                         {payments.length === 0 && (
                           <tr>
                             <td
-                              colSpan={5}
+                              colSpan={6}
                               className="px-6 py-4 text-center text-sm text-slate-500"
                             >
                               No payments found.
@@ -2128,7 +2153,7 @@ export default function AdminDashboard({ userRole }: AdminDashboardProps) {
                             const nameB = users.find(u => u.id === b.studentId)?.name || b.studentId;
                             return nameA.localeCompare(nameB);
                           })
-                          .map((payment) => {
+                          .map((payment, index) => {
                             const studentUser = users.find(
                               (u) => u.id === payment.studentId,
                             );
@@ -2137,6 +2162,9 @@ export default function AdminDashboard({ userRole }: AdminDashboardProps) {
                             );
                             return (
                               <tr key={payment.id}>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-slate-500">
+                                  {index + 1}
+                                </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-900">
                                   <div className="font-semibold text-slate-800">
                                     {studentUser?.name || payment.studentId}
@@ -2248,15 +2276,27 @@ export default function AdminDashboard({ userRole }: AdminDashboardProps) {
                     <h2 className="text-2xl font-bold text-slate-900">
                       Registered Students
                     </h2>
-                    <div className="relative w-full sm:w-72">
-                      <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
-                      <input
-                        type="text"
-                        placeholder="Search by name..."
-                        value={usersSearchQuery}
-                        onChange={(e) => setUsersSearchQuery(e.target.value)}
-                        className="w-full pl-9 pr-4 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                      />
+                    <div className="flex flex-col sm:flex-row gap-4 items-center w-full sm:w-auto">
+                      <div className="flex items-center gap-3 bg-white px-4 py-2 border border-slate-200 rounded-lg whitespace-nowrap shadow-sm">
+                        <span className="text-sm font-semibold text-slate-700">Auto-Verify New Accounts:</span>
+                        <button
+                          onClick={handleToggleAutoVerification}
+                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${autoVerifyNewUsers ? 'bg-emerald-500' : 'bg-slate-300'}`}
+                        >
+                          <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${autoVerifyNewUsers ? 'translate-x-6' : 'translate-x-1'}`} />
+                        </button>
+                      </div>
+                      
+                      <div className="relative w-full sm:w-72">
+                        <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
+                        <input
+                          type="text"
+                          placeholder="Search by name..."
+                          value={usersSearchQuery}
+                          onChange={(e) => setUsersSearchQuery(e.target.value)}
+                          className="w-full pl-9 pr-4 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                        />
+                      </div>
                     </div>
                   </div>
 
@@ -2269,6 +2309,7 @@ export default function AdminDashboard({ userRole }: AdminDashboardProps) {
                       <table className="min-w-full divide-y divide-slate-200">
                         <thead className="bg-slate-50">
                           <tr>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">S.N.</th>
                             <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Student ID</th>
                             <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Name</th>
                             <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Email</th>
@@ -2286,8 +2327,9 @@ export default function AdminDashboard({ userRole }: AdminDashboardProps) {
                               if (a.role === 'admin' && b.role === 'admin') return 0;
                               return (a.name || "").localeCompare(b.name || "");
                             })
-                            .map((u) => (
+                            .map((u, index) => (
                               <tr key={u.id}>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-slate-500">{index + 1}</td>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-blue-600">{u.studentId || "N/A"}</td>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-900">{u.name}</td>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">{u.email}</td>
@@ -2315,39 +2357,31 @@ export default function AdminDashboard({ userRole }: AdminDashboardProps) {
                     </div>
                   </div>
 
-                  <div>
+                  <div className="mb-8">
                     <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
-                      <Users className="w-5 h-5 text-blue-600" />
-                      Students
+                      <Users className="w-5 h-5 text-emerald-600" />
+                      Verified Students
                     </h3>
                     <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-x-auto">
                       <table className="min-w-full divide-y divide-slate-200">
                         <thead className="bg-slate-50">
                           <tr>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">
-                              Student ID
-                            </th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">
-                              Name
-                            </th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">
-                              Email
-                            </th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">
-                              Status
-                            </th>
-                            <th className="px-6 py-3 text-right text-xs font-medium text-slate-500 uppercase">
-                              Actions
-                            </th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">S.N.</th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Student ID</th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Name</th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Email</th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Status</th>
+                            <th className="px-6 py-3 text-right text-xs font-medium text-slate-500 uppercase">Actions</th>
                           </tr>
                         </thead>
                         <tbody className="bg-white divide-y divide-slate-200">
                           {users
                             .filter(u => (u.name || "").toLowerCase().includes(usersSearchQuery.toLowerCase()))
-                            .filter(u => !u.role || u.role === 'student')
+                            .filter(u => (!u.role || u.role === 'student') && u.emailVerified === true)
                             .sort((a, b) => (a.name || "").localeCompare(b.name || ""))
-                            .map((u) => (
+                            .map((u, index) => (
                               <tr key={u.id}>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-slate-500">{index + 1}</td>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-blue-600">
                                   {editingStudent?.id === u.id ? (
                                     <form onSubmit={handleUpdateStudentId} className="flex items-center gap-2">
@@ -2365,18 +2399,10 @@ export default function AdminDashboard({ userRole }: AdminDashboardProps) {
                                     u.studentId || "N/A"
                                   )}
                                 </td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-900">
-                                  {u.name}
-                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-900">{u.name}</td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">{u.email}</td>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
-                                  {u.email}
-                                </td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
-                                  {u.emailVerified ? (
-                                    <span className="px-2 py-1 rounded bg-emerald-50 text-emerald-600 text-xs font-bold uppercase">Verified</span>
-                                  ) : (
-                                    <span className="px-2 py-1 rounded bg-amber-50 text-amber-600 text-xs font-bold uppercase">Unverified</span>
-                                  )}
+                                  <span className="px-2 py-1 rounded bg-emerald-50 text-emerald-600 text-xs font-bold uppercase">Verified</span>
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
                                   {editingStudent?.id !== u.id && (
@@ -2391,9 +2417,97 @@ export default function AdminDashboard({ userRole }: AdminDashboardProps) {
                                       )}
                                       <button
                                         onClick={() => handleToggleVerification(u.id, u.emailVerified)}
-                                        className={`px-3 py-1 rounded font-semibold text-xs transition-colors ${u.emailVerified ? 'text-amber-600 hover:bg-amber-100 bg-amber-50' : 'text-emerald-600 hover:bg-emerald-100 bg-emerald-50'}`}
+                                        className="px-3 py-1 rounded font-semibold text-xs transition-colors text-amber-600 hover:bg-amber-100 bg-amber-50"
                                       >
-                                        {u.emailVerified ? 'Unverify' : 'Verify'}
+                                        Unverify
+                                      </button>
+                                      <button
+                                        onClick={() => setEditingStudent({ id: u.id, name: u.name, studentId: u.studentId || "" })}
+                                        disabled={userRole !== 'admin'}
+                                        className={`px-3 py-1 rounded font-semibold text-xs transition-colors ${userRole === 'admin' ? 'text-blue-600 hover:bg-blue-100 bg-blue-50' : 'text-slate-400 bg-slate-100 cursor-not-allowed'}`}
+                                      >
+                                        Edit ID
+                                      </button>
+                                      <button
+                                        onClick={() => handleDeleteStudent(u.id)}
+                                        disabled={userRole !== 'admin'}
+                                        className={`px-3 py-1 rounded font-semibold text-xs transition-colors ${userRole === 'admin' ? 'text-rose-600 hover:bg-rose-100 bg-rose-50' : 'text-slate-400 bg-slate-100 cursor-not-allowed'}`}
+                                      >
+                                        Delete
+                                      </button>
+                                    </div>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
+                      <Users className="w-5 h-5 text-amber-600" />
+                      Unverified Students
+                    </h3>
+                    <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-x-auto">
+                      <table className="min-w-full divide-y divide-slate-200">
+                        <thead className="bg-slate-50">
+                          <tr>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">S.N.</th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Student ID</th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Name</th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Email</th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Status</th>
+                            <th className="px-6 py-3 text-right text-xs font-medium text-slate-500 uppercase">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-slate-200">
+                          {users
+                            .filter(u => (u.name || "").toLowerCase().includes(usersSearchQuery.toLowerCase()))
+                            .filter(u => (!u.role || u.role === 'student') && u.emailVerified !== true)
+                            .sort((a, b) => (a.name || "").localeCompare(b.name || ""))
+                            .map((u, index) => (
+                              <tr key={u.id}>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-slate-500">{index + 1}</td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-blue-600">
+                                  {editingStudent?.id === u.id ? (
+                                    <form onSubmit={handleUpdateStudentId} className="flex items-center gap-2">
+                                      <input 
+                                        type="text" 
+                                        value={editingStudent.studentId}
+                                        onChange={(e) => setEditingStudent({...editingStudent, studentId: e.target.value})}
+                                        className="border border-slate-300 rounded px-2 py-1 text-xs w-32 focus:outline-none focus:border-blue-500"
+                                        autoFocus
+                                      />
+                                      <button type="submit" className="text-emerald-600 hover:text-emerald-700 font-bold text-xs">Save</button>
+                                      <button type="button" onClick={() => setEditingStudent(null)} className="text-slate-400 hover:text-slate-600 font-bold text-xs">Cancel</button>
+                                    </form>
+                                  ) : (
+                                    u.studentId || "N/A"
+                                  )}
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-900">{u.name}</td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">{u.email}</td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
+                                  <span className="px-2 py-1 rounded bg-amber-50 text-amber-600 text-xs font-bold uppercase">Unverified</span>
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
+                                  {editingStudent?.id !== u.id && (
+                                    <div className="flex justify-end gap-2">
+                                      {userRole === 'admin' && (
+                                        <button
+                                          onClick={() => handleToggleAdminRole(u.id, u.role)}
+                                          className="text-indigo-600 hover:bg-indigo-100 px-3 py-1 bg-indigo-50 rounded font-semibold text-xs transition-colors"
+                                        >
+                                          Make Co-Admin
+                                        </button>
+                                      )}
+                                      <button
+                                        onClick={() => handleToggleVerification(u.id, u.emailVerified)}
+                                        className="px-3 py-1 rounded font-semibold text-xs transition-colors text-emerald-600 hover:bg-emerald-100 bg-emerald-50"
+                                      >
+                                        Verify
                                       </button>
                                       <button
                                         onClick={() => setEditingStudent({ id: u.id, name: u.name, studentId: u.studentId || "" })}
