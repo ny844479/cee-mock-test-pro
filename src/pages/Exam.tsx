@@ -70,14 +70,26 @@ export default function Exam({ user }: ExamProps) {
         let durationSeconds = examData.duration * 60;
         setTimeLeft(durationSeconds);
 
-        const qSnapshot = await getDocs(query(collection(db, 'questions'), where('examId', '==', examId)));
-        // if no questions, maybe mock something
-        if (qSnapshot.empty) {
-          setExamAlertMsg("Exam has no questions yet. Contact Admin.");
-          return;
+        const cachedQuestionsStr = localStorage.getItem(`exam_questions_${examId}`);
+        const qCache = cachedQuestionsStr ? JSON.parse(cachedQuestionsStr) : null;
+        
+        let qData: any[] = [];
+        const CACHE_EXPIRY = 12 * 60 * 60 * 1000; // 12 hours cache
+        
+        if (qCache && qCache.timestamp && (now.getTime() - qCache.timestamp < CACHE_EXPIRY)) {
+          qData = qCache.data;
+        } else {
+          const qSnapshot = await getDocs(query(collection(db, 'questions'), where('examId', '==', examId)));
+          if (qSnapshot.empty) {
+            setExamAlertMsg("Exam has no questions yet. Contact Admin.");
+            return;
+          }
+          qData = qSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+          localStorage.setItem(`exam_questions_${examId}`, JSON.stringify({
+            timestamp: now.getTime(),
+            data: qData
+          }));
         }
-
-        const qData: any[] = qSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
         
         // Fisher-Yates Shuffle helper to randomize questions within each subject
         const shuffleArray = (array: any[]) => {
