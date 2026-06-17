@@ -1,13 +1,31 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { User, sendEmailVerification } from 'firebase/auth';
-import { Mail, RefreshCw, LogOut, CheckCircle2 } from 'lucide-react';
-import { auth } from '../firebase';
+import { doc, getDoc } from 'firebase/firestore';
+import { Mail, RefreshCw, LogOut, CheckCircle2, ShieldAlert } from 'lucide-react';
+import { auth, db } from '../firebase';
 
 export default function RequireVerification({ user, isVerified, children }: { user: User, isVerified: boolean, children: React.ReactNode }) {
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState('');
   const [reloading, setReloading] = useState(false);
+  const [isManualVerification, setIsManualVerification] = useState(false);
+
+  useEffect(() => {
+    const checkSettings = async () => {
+      try {
+        const genSettings = await getDoc(doc(db, "settings", "general"));
+        if (genSettings.exists()) {
+          setIsManualVerification(genSettings.data().autoVerification === false);
+        }
+      } catch (e) {
+        console.warn("Could not load verification settings", e);
+      }
+    };
+    if (!isVerified) {
+      checkSettings();
+    }
+  }, [isVerified]);
 
   if (isVerified) {
     return <>{children}</>;
@@ -32,12 +50,18 @@ export default function RequireVerification({ user, isVerified, children }: { us
 
   const handleReload = async () => {
     setReloading(true);
+    setError('');
     try {
-      await user.reload();
-      if (auth.currentUser?.emailVerified) {
-        window.location.reload(); // Hard reload to update routes and global state cleanly
+      if (isManualVerification) {
+        // Just reload the window; App.tsx handles global state fetch from DB
+        window.location.reload();
       } else {
-        setError('Your email is still not verified. Please check your inbox and click the link.');
+        await user.reload();
+        if (auth.currentUser?.emailVerified) {
+          window.location.reload(); // Hard reload to update routes and global state cleanly
+        } else {
+          setError('Your email is still not verified. Please check your inbox and click the link.');
+        }
       }
     } catch (error) {
       setError('Failed to refresh status.');
@@ -52,13 +76,16 @@ export default function RequireVerification({ user, isVerified, children }: { us
         <div className="absolute top-0 left-0 w-full h-1 bg-amber-500"></div>
         
         <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-5 shadow-inner">
-          <Mail className="w-8 h-8 text-amber-600" />
+          {isManualVerification ? <ShieldAlert className="w-8 h-8 text-amber-600" /> : <Mail className="w-8 h-8 text-amber-600" />}
         </div>
         
-        <h2 className="text-2xl font-black text-gray-900 mb-3 tracking-tight">Verify Your Email Address</h2>
+        <h2 className="text-2xl font-black text-gray-900 mb-3 tracking-tight">
+          {isManualVerification ? "Account Pending Review" : "Verify Your Email Address"}
+        </h2>
         <p className="text-sm text-gray-600 mb-6 leading-relaxed">
-          We need to verify your email address to ensure account security. 
-          Please check your inbox (and <span className="font-semibold text-gray-800">spam/junk folder</span>) for a verification link.
+          {isManualVerification 
+            ? "Your account is currently pending manual verification by an administrator. Please wait for approval before accessing your dashboard."
+            : <>We need to verify your email address to ensure account security. Please check your inbox (and <span className="font-semibold text-gray-800">spam/junk folder</span>) for a verification link.</>}
         </p>
 
         {error && (
@@ -67,8 +94,8 @@ export default function RequireVerification({ user, isVerified, children }: { us
           </div>
         )}
 
-        {sent && (
-          <div className="mb-6 bg-emerald-50 text-emerald-800 text-sm px-4 py-3 xl rounded-xl border border-emerald-200 font-medium flex items-center justify-center gap-2">
+        {sent && !isManualVerification && (
+          <div className="mb-6 bg-emerald-50 text-emerald-800 text-sm px-4 py-3 rounded-xl border border-emerald-200 font-medium flex items-center justify-center gap-2">
             <CheckCircle2 className="w-5 h-5 text-emerald-600" />
             Verification email sent successfully!
           </div>
@@ -81,16 +108,18 @@ export default function RequireVerification({ user, isVerified, children }: { us
             className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-bold shadow-md hover:shadow-lg transition-all disabled:opacity-70 disabled:cursor-not-allowed"
           >
             <RefreshCw className={`w-4 h-4 ${reloading ? 'animate-spin' : ''}`} />
-            {reloading ? 'Checking...' : 'I have verified my email'}
+            {reloading ? 'Checking...' : (isManualVerification ? 'Check Approval Status' : 'I have verified my email')}
           </button>
 
-          <button
-            onClick={handleSendVerification}
-            disabled={loading || sent}
-            className="w-full py-3 px-4 bg-white border-2 border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-slate-700 rounded-xl text-sm font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {loading ? 'Sending...' : 'Resend Verification Email'}
-          </button>
+          {!isManualVerification && (
+            <button
+              onClick={handleSendVerification}
+              disabled={loading || sent}
+              className="w-full py-3 px-4 bg-white border-2 border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-slate-700 rounded-xl text-sm font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {loading ? 'Sending...' : 'Resend Verification Email'}
+            </button>
+          )}
         </div>
 
         <div className="mt-8 pt-6 border-t border-gray-100">
