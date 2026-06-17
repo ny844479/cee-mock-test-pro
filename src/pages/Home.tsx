@@ -13,31 +13,53 @@ export default function Home() {
   useEffect(() => {
     async function loadLandingConfig() {
       try {
+        const CACHE_KEY = "landing_config_cache";
+        const CACHE_EXPIRY = 60 * 60 * 1000; // 1 hour
+        const now = new Date().getTime();
+        const cachedStr = localStorage.getItem(CACHE_KEY);
+        const cache = cachedStr ? JSON.parse(cachedStr) : null;
+
+        if (cache && cache.timestamp && (now - cache.timestamp < CACHE_EXPIRY)) {
+          setLandingConfig(cache.data);
+          return;
+        }
+
         // Try the more reliable exams/landing document first
         const examsRef = doc(db, 'exams', 'landing');
         const examsSnap = await getDoc(examsRef);
+        let dataToCache = null;
+        
         if (examsSnap.exists()) {
           const data = examsSnap.data();
           if (data.landingTitle && data.landingDescription) {
-            setLandingConfig({
+            dataToCache = {
               landingTitle: data.landingTitle,
               landingDescription: data.landingDescription
-            });
-            return;
+            };
           }
         }
 
-        // Fallback to settings/landing
-        const docRef = doc(db, 'settings', 'landing');
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          if (data.landingTitle && data.landingDescription) {
-            setLandingConfig({
-              landingTitle: data.landingTitle,
-              landingDescription: data.landingDescription
-            });
+        if (!dataToCache) {
+          // Fallback to settings/landing
+          const docRef = doc(db, 'settings', 'landing');
+          const docSnap = await getDoc(docRef);
+          if (docSnap.exists()) {
+            const data = docSnap.data();
+            if (data.landingTitle && data.landingDescription) {
+              dataToCache = {
+                landingTitle: data.landingTitle,
+                landingDescription: data.landingDescription
+              };
+            }
           }
+        }
+
+        if (dataToCache) {
+          setLandingConfig(dataToCache);
+          localStorage.setItem(CACHE_KEY, JSON.stringify({
+            timestamp: now,
+            data: dataToCache
+          }));
         }
       } catch (err) {
         console.warn("Could not load landing configurations from Firestore:", err);
