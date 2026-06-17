@@ -51,15 +51,33 @@ export default function Leaderboard({ user }: LeaderboardProps) {
       if (!selectedExam) return;
       setLoading(true);
       try {
-        const q = query(
-          collection(db, "results"),
-          where("examId", "==", selectedExam),
-        );
-        const snapshot = await getDocs(q);
-        const results = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...(doc.data() as any),
-        }));
+        const CACHE_KEY = `leaderboard_${selectedExam}`;
+        const CACHE_EXPIRY = 5 * 60 * 1000; // 5 minutes cache
+        
+        const cachedStr = localStorage.getItem(CACHE_KEY);
+        const cache = cachedStr ? JSON.parse(cachedStr) : null;
+        const now = new Date().getTime();
+        
+        let results = [];
+        
+        if (cache && cache.timestamp && (now - cache.timestamp < CACHE_EXPIRY)) {
+          results = cache.data;
+        } else {
+          const q = query(
+            collection(db, "results"),
+            where("examId", "==", selectedExam),
+          );
+          const snapshot = await getDocs(q);
+          results = snapshot.docs.map((doc) => ({
+            id: doc.id,
+            ...(doc.data() as any),
+          }));
+          
+          localStorage.setItem(CACHE_KEY, JSON.stringify({
+            timestamp: now,
+            data: results
+          }));
+        }
 
         // Sort client-side:
         // 1. Overall Score Descending
