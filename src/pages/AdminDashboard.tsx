@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from "react";
-import Papa from "papaparse";
 import {
   collection,
   query,
@@ -29,6 +28,76 @@ import {
   ArrowUp,
   ArrowDown,
 } from "lucide-react";
+
+function parseCSV(text: string): Record<string, string>[] {
+  const lines: string[] = [];
+  let currentLine = '';
+  let insideQuotes = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (char === '"') {
+      insideQuotes = !insideQuotes;
+    } else if ((char === '\r' || char === '\n') && !insideQuotes) {
+      if (currentLine.trim()) {
+        lines.push(currentLine);
+      }
+      currentLine = '';
+      if (char === '\r' && text[i + 1] === '\n') {
+        i++; // skip \n
+      }
+    } else {
+      currentLine += char;
+    }
+  }
+  if (currentLine.trim()) {
+    lines.push(currentLine);
+  }
+
+  if (lines.length === 0) return [];
+
+  // Parse header
+  const headerLine = lines[0];
+  const headers = parseCSVLine(headerLine);
+
+  const results: Record<string, string>[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const values = parseCSVLine(lines[i]);
+    const obj: Record<string, string> = {};
+    for (let j = 0; j < headers.length; j++) {
+      obj[headers[j]] = values[j] || '';
+    }
+    results.push(obj);
+  }
+
+  return results;
+}
+
+function parseCSVLine(line: string): string[] {
+  const result: string[] = [];
+  let currentField = '';
+  let insideQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (char === '"') {
+      // Check for escaped quote: ""
+      if (insideQuotes && line[i + 1] === '"') {
+        currentField += '"';
+        i++; // skip next quote
+      } else {
+        insideQuotes = !insideQuotes;
+      }
+    } else if (char === ',' && !insideQuotes) {
+      result.push(currentField.trim());
+      currentField = '';
+    } else {
+      currentField += char;
+    }
+  }
+  result.push(currentField.trim());
+  return result;
+}
 
 interface AdminDashboardProps {
   userRole?: string | null;
@@ -799,15 +868,12 @@ export default function AdminDashboard({ userRole }: AdminDashboardProps) {
           return alert(`JSON Parse Error: ${parseErr.message}\nPlease make sure the JSON format is correct.`);
         }
       } else {
-        // Try CSV parsing
-        const parsed = Papa.parse(textToParse, {
-          header: true,
-          skipEmptyLines: true,
-        });
-        if (parsed.errors.length > 0) {
-          return alert(`CSV Parse Error: ${parsed.errors[0].message}`);
+        // Try CSV parsing via custom helper
+        try {
+          questionsToUpload = parseCSV(textToParse);
+        } catch (csvErr: any) {
+          return alert(`CSV Parse Error: ${csvErr.message || csvErr}`);
         }
-        questionsToUpload = parsed.data;
       }
 
       if (questionsToUpload.length === 0) {
