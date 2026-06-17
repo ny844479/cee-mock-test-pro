@@ -49,23 +49,38 @@ export default function Payment({ user }: PaymentProps) {
       // 2. Fetch payments instructions config
       try {
         let loaded = false;
-        const settingsSnap = await getDoc(doc(doc(db, 'settings', 'payment').parent, 'payment'));
-        if (settingsSnap.exists()) {
-          const sData = settingsSnap.data();
-          if (sData.paymentNumber) setPaymentNumber(sData.paymentNumber);
-          if (sData.paymentMethod) setPaymentMethod(sData.paymentMethod);
-          if (sData.paymentInstructions) setPaymentInstructions(sData.paymentInstructions);
-          loaded = true;
+        const CACHE_KEY = "payment_config_cache";
+        const CACHE_EXPIRY = 60 * 60 * 1000;
+        const now = new Date().getTime();
+        const cachedStr = localStorage.getItem(CACHE_KEY);
+        const cache = cachedStr ? JSON.parse(cachedStr) : null;
+        
+        let pData = null;
+
+        if (cache && cache.timestamp && (now - cache.timestamp < CACHE_EXPIRY)) {
+          pData = cache.data;
+        } else {
+          const settingsSnap = await getDoc(doc(db, 'settings', 'payment'));
+          if (settingsSnap.exists()) {
+             pData = settingsSnap.data();
+          } else {
+             const examsSnap = await getDoc(doc(db, 'exams', 'payment'));
+             if (examsSnap.exists()) {
+               pData = examsSnap.data();
+             }
+          }
+          if (pData) {
+            localStorage.setItem(CACHE_KEY, JSON.stringify({
+              timestamp: now,
+              data: pData
+            }));
+          }
         }
 
-        if (!loaded) {
-          const examsSnap = await getDoc(doc(db, 'exams', 'payment'));
-          if (examsSnap.exists()) {
-            const eData = examsSnap.data();
-            if (eData.paymentNumber) setPaymentNumber(eData.paymentNumber);
-            if (eData.paymentMethod) setPaymentMethod(eData.paymentMethod);
-            if (eData.paymentInstructions) setPaymentInstructions(eData.paymentInstructions);
-          }
+        if (pData) {
+          if (pData.paymentNumber) setPaymentNumber(pData.paymentNumber);
+          if (pData.paymentMethod) setPaymentMethod(pData.paymentMethod);
+          if (pData.paymentInstructions) setPaymentInstructions(pData.paymentInstructions);
         }
       } catch (paymentErr) {
         console.warn("Could not load custom payment setup, using standards:", paymentErr);
