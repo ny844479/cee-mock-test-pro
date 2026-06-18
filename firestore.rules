@@ -121,7 +121,7 @@ service cloud.firestore {
     }
     
     match /payments/{paymentId} {
-      allow read: if isSignedIn() && (resource.data.studentId == request.auth.uid || isStaff());
+      allow read: if isSignedIn() && (resource == null || resource.data.studentId == request.auth.uid || isStaff());
       allow create: if isSignedIn() && (
                       (incoming().studentId == request.auth.uid && isValidPayment(incoming()) && incoming().status in ['pending', 'approved', 'rejected']) ||
                       isStaff()
@@ -144,5 +144,5 @@ service cloud.firestore {
       allow read: if true;
       allow create: if isSignedIn() && 
                     incoming().studentId == request.auth.uid;
-      allow update, delete: if isStaff();
-    }
+      allow update: if isStaff() || 
+                    (isSignedIn() && 
