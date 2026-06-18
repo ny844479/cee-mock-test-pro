@@ -56,8 +56,13 @@ Extract this information and return it strictly matching the requested JSON stru
 
       // Perform the vision generation call with robust multiple attempts & backoff to naturally absorb transient 503 spikes.
       const generateWithRetry = async (attempt: number = 1): Promise<any> => {
-        const maxAttempts = 3;
-        const modelsToTry = ["gemini-3.5-flash", "gemini-flash-latest"];
+        const maxAttempts = 5;
+        const modelsToTry = [
+          "gemini-2.5-flash",
+          "gemini-3.5-flash",
+          "gemini-3.1-flash-lite",
+          "gemini-flash-latest"
+        ];
         const modelName = modelsToTry[(attempt - 1) % modelsToTry.length];
         
         try {
@@ -98,7 +103,7 @@ Extract this information and return it strictly matching the requested JSON stru
         } catch (err: any) {
           if (attempt < maxAttempts) {
             const delay = Math.pow(2, attempt) * 1000 + Math.random() * 500;
-            console.log(`[Status info] Gemini call via ${modelName} deferred. Retrying next attempt in ${delay.toFixed(0)}ms...`);
+            console.log(`[Status info] Gemini call via ${modelName} deferred. Retrying next attempt in ${delay.toFixed(0)}ms (Attempt ${attempt}/${maxAttempts}). Error text: ${err.message || err}`);
             await new Promise(resolve => setTimeout(resolve, delay));
             return generateWithRetry(attempt + 1);
           }
