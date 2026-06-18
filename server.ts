@@ -3,21 +3,33 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
+import fs from "fs";
 
 dotenv.config();
 
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
+// Lazily initialize representation of GoogleGenAI or handle it cleanly.
+let aiInstance: GoogleGenAI | null = null;
+function getGenAI() {
+  if (!aiInstance) {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      throw new Error("GEMINI_API_KEY environment variable is not defined on the server side.");
     }
+    aiInstance = new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
   }
-});
+  return aiInstance;
+}
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
   app.use(express.json({ limit: "20mb" }));
 
@@ -56,9 +68,8 @@ Extract this information and return it strictly matching the requested JSON stru
 
       // Perform the vision generation call with robust multiple attempts & backoff to naturally absorb transient 503 spikes.
       const generateWithRetry = async (attempt: number = 1): Promise<any> => {
-        const maxAttempts = 5;
+        const maxAttempts = 6;
         const modelsToTry = [
-          "gemini-2.5-flash",
           "gemini-3.5-flash",
           "gemini-3.1-flash-lite",
           "gemini-flash-latest"
@@ -66,7 +77,8 @@ Extract this information and return it strictly matching the requested JSON stru
         const modelName = modelsToTry[(attempt - 1) % modelsToTry.length];
         
         try {
-          return await ai.models.generateContent({
+          const aiClient = getGenAI();
+          return await aiClient.models.generateContent({
             model: modelName,
             contents: [
               prompt,
@@ -128,15 +140,19 @@ Extract this information and return it strictly matching the requested JSON stru
     }
   });
 
-  // Vite middleware for development
-  if (process.env.NODE_ENV !== "production") {
+  // Serve built SPA static files if dist/index.html exists (production fallback for environments like Render where NODE_ENV may not be defined)
+  const distPath = path.join(process.cwd(), 'dist');
+  const hasDist = fs.existsSync(path.join(distPath, 'index.html'));
+
+  if (process.env.NODE_ENV !== "production" && !hasDist) {
+    console.log("Starting in development mode with Vite middleware...");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
+    console.log(`Starting in production mode. Serving static files from ${distPath}`);
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
