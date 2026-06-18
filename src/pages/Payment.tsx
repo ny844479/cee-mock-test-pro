@@ -259,18 +259,18 @@ export default function Payment({ user }: PaymentProps) {
   if (!exam) return <div className="p-8 text-center text-slate-500">Loading exam details...</div>;
 
   return (
-    <div className="min-h-[80vh] flex flex-col justify-center py-12 sm:px-6 lg:px-8 bg-slate-50">
+    <div className="min-h-[75vh] flex flex-col justify-center py-4 sm:px-6 lg:px-8 bg-slate-50">
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
         <div className="text-center">
-          <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-green-100">
-            <CheckCircle className="h-6 w-6 text-green-600" />
+          <div className="mx-auto flex items-center justify-center h-8 w-8 rounded-full bg-green-100">
+            <CheckCircle className="h-4 w-4 text-green-600" />
           </div>
-          <h2 className="mt-6 text-3xl font-extrabold text-slate-900">Purchase Exam Access</h2>
-          <p className="mt-2 text-sm text-slate-600">
-            <span className="font-semibold text-slate-800">{exam.title}</span> • Rs. {exam.price}
+          <h2 className="mt-2 text-xl font-bold text-slate-900">Purchase Exam Access</h2>
+          <p className="mt-0.5 text-xs text-slate-600">
+            <span className="font-semibold text-slate-850">{exam.title}</span> • Rs. {exam.price}
           </p>
           {(exam.startTime || exam.endTime) && (
-            <div className="mt-4 flex flex-col items-center text-xs text-slate-500 bg-white inline-block px-4 py-2 rounded-lg border border-slate-200">
+            <div className="mt-2 flex flex-col items-center text-[10px] text-slate-500 bg-white inline-block px-2.5 py-1 rounded-lg border border-slate-200">
               {exam.startTime && <div>Starts: <span className="font-medium text-slate-700">{new Date(exam.startTime).toLocaleString()}</span></div>}
               {exam.endTime && <div>Ends: <span className="font-medium text-slate-700">{new Date(exam.endTime).toLocaleString()}</span></div>}
             </div>
@@ -278,7 +278,7 @@ export default function Payment({ user }: PaymentProps) {
         </div>
       </div>
 
-      <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
+      <div className="mt-5 sm:mx-auto sm:w-full sm:max-w-md">
         <div className="bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10 border border-slate-200">
           
           {isPaymentLocked ? (
