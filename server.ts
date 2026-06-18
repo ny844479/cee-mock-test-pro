@@ -28,6 +28,13 @@ async function startServer() {
         return res.status(400).json({ error: "No image provided" });
       }
 
+      // Detect original mimeType from the Data URL prefix
+      let mimeType = "image/jpeg"; // default fallback
+      const mimeMatch = imageBase64.match(/^data:(image\/\w+);base64,/);
+      if (mimeMatch) {
+        mimeType = mimeMatch[1];
+      }
+
       // Remove the data URI prefix if present
       const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
 
@@ -40,43 +47,98 @@ Context for Verification:
 - Expected Amount to verify: Rs. ${expectedAmount || 'unknown'}
 
 Please inspect the receipt image carefully to locate:
-1. The Transaction ID, Ref ID, or Transaction Code (often a mix of letters and numbers or numeric string).
-2. The total paid amount or transferred amount.
+1. The Transaction ID, Ref ID, or Transaction Code (often a mix of letters and numbers or numeric string). If present, return it exactly.
+2. The total paid amount or transferred amount (extract the numeric portion as cleanly as possible).
 3. The recipient/receiver name, wallet number, merchant name, or receiver information.
 
-Extract this information and return it strictly in JSON format.
-If you cannot find a certain field, set it to an empty string.
-Do not include any Markdown styling (like \`\`\`json) or extra text. Return ONLY raw JSON.
-
-{
-  "transactionId": "...", // The transaction code/ID/Ref ID
-  "amount": "...", // The number only (e.g. "100" from "Rs. 100")
-  "receiverInfo": "..." // The name, phone number, or merchant label of the person receiving the money
-}
+Extract this information and return it strictly matching the requested JSON structure.
       `;
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: [
-          prompt,
-          {
-            inlineData: {
-              data: base64Data,
-              mimeType: "image/jpeg",
+      let response;
+      try {
+        response = await ai.models.generateContent({
+          model: "gemini-3.5-flash",
+          contents: [
+            prompt,
+            {
+              inlineData: {
+                data: base64Data,
+                mimeType: mimeType,
+              },
             },
+          ],
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: "OBJECT",
+              properties: {
+                transactionId: { 
+                  type: "STRING",
+                  description: "The transaction code, ID, Ref ID, or transaction sequence string found on the receipt."
+                },
+                amount: { 
+                  type: "STRING", 
+                  description: "The total paid amount or transfer amount as a clean numeric string (unformatted or formatted)."
+                },
+                receiverInfo: { 
+                  type: "STRING",
+                  description: "The name, nickname, phone, or merchant identifier showing who received the payment."
+                }
+              },
+              required: ["transactionId", "amount", "receiverInfo"]
+            },
+            temperature: 0.1,
           },
-        ],
-        config: {
-          responseMimeType: "application/json",
-          temperature: 0.1,
-        },
-      });
+        });
+      } catch (primaryErr: any) {
+        console.warn("Primary model gemini-3.5-flash failed or was overloaded. Falling back to gemini-2.5-flash. Error details:", primaryErr.message || primaryErr);
+        response = await ai.models.generateContent({
+          model: "gemini-2.5-flash",
+          contents: [
+            prompt,
+            {
+              inlineData: {
+                data: base64Data,
+                mimeType: mimeType,
+              },
+            },
+          ],
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: "OBJECT",
+              properties: {
+                transactionId: { 
+                  type: "STRING",
+                  description: "The transaction code, ID, Ref ID, or transaction sequence string found on the receipt."
+                },
+                amount: { 
+                  type: "STRING", 
+                  description: "The total paid amount or transfer amount as a clean numeric string (unformatted or formatted)."
+                },
+                receiverInfo: { 
+                  type: "STRING",
+                  description: "The name, nickname, phone, or merchant identifier showing who received the payment."
+                }
+              },
+              required: ["transactionId", "amount", "receiverInfo"]
+            },
+            temperature: 0.1,
+          },
+        });
+      }
 
       let jsonStr = response.text || "{}";
+      
+      // Clean up markdown block headers if any slip through in edge cases
+      if (jsonStr.includes("```")) {
+        jsonStr = jsonStr.replace(/```json/g, "").replace(/```/g, "").trim();
+      }
+
       const result = JSON.parse(jsonStr);
       res.json(result);
     } catch (error: any) {
-      console.error("Gemini API error:", error);
+      console.warn("Gemini API error during receipt analysis:", error.message || error);
       res.status(500).json({ error: error.message || "Failed to analyze receipt" });
     }
   });
