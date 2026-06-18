@@ -146,3 +146,10 @@ service cloud.firestore {
                     incoming().studentId == request.auth.uid;
       allow update: if isStaff() || 
                     (isSignedIn() && 
+                     existing().studentId == request.auth.uid && 
+                     incoming().studentId == request.auth.uid);
+      allow delete: if isStaff();
+    }
+  }
+}
+
