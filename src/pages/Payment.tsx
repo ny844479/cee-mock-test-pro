@@ -226,6 +226,30 @@ export default function Payment({ user }: PaymentProps) {
               .replace(/[IL]/g, "1");
           };
 
+          // Self-contained fuzzy similarity matcher for OCR discrepancies
+          const getSimilarityRatio = (s1: string, s2: string): number => {
+            if (!s1 || !s2) return 0;
+            if (s1 === s2) return 1.0;
+            const len1 = s1.length;
+            const len2 = s2.length;
+            const matrix: number[][] = Array.from({ length: len1 + 1 }, () => Array(len2 + 1).fill(0));
+            for (let i = 0; i <= len1; i++) matrix[i][0] = i;
+            for (let j = 0; j <= len2; j++) matrix[0][j] = j;
+            for (let i = 1; i <= len1; i++) {
+              for (let j = 1; j <= len2; j++) {
+                const cost = s1[i - 1] === s2[j - 1] ? 0 : 1;
+                matrix[i][j] = Math.min(
+                  matrix[i - 1][j] + 1,
+                  matrix[i][j - 1] + 1,
+                  matrix[i - 1][j - 1] + cost
+                );
+              }
+            }
+            const distance = matrix[len1][len2];
+            const maxLen = Math.max(len1, len2);
+            return 1.0 - distance / maxLen;
+          };
+
           const cleanExtracted = normalizeTxId(analysis.transactionId);
           const cleanUser = normalizeTxId(cleanTransactionId);
            
@@ -235,41 +259,48 @@ export default function Payment({ user }: PaymentProps) {
 
           const receiverText = String(analysis.receiverInfo || "").toLowerCase();
           
-          // Dynamic Receiver Checks
+          // Dynamic Receiver Checks (handles masked numbers eSewa often employs for security)
           const cleanAdminNum = paymentNumber ? paymentNumber.replace(/\s+/g, "") : "";
+          const numPrefix = cleanAdminNum && cleanAdminNum.length >= 4 ? cleanAdminNum.substring(0, 4) : "";
+          const numSuffix = cleanAdminNum && cleanAdminNum.length >= 4 ? cleanAdminNum.substring(cleanAdminNum.length - 4) : "";
+
           const matchesReceiver = 
             !receiverText || // Lenient if OCR fails to read receiver field clearly
             receiverText.includes("nikhil") || 
             receiverText.includes("yadav") || 
             receiverText.includes("kumar") || 
             (cleanAdminNum && receiverText.includes(cleanAdminNum)) ||
+            (numPrefix && receiverText.includes(numPrefix)) ||
+            (numSuffix && receiverText.includes(numSuffix)) ||
             (paymentMethod && receiverText.includes(paymentMethod.toLowerCase())) ||
             receiverText.length < 3;
 
-          const isTxIdMatching = 
+          const isTxIdExactMatch = 
             cleanExtracted === cleanUser || 
-            (cleanExtracted.length >= 6 && cleanUser.includes(cleanExtracted)) || 
-            (cleanUser.length >= 6 && cleanExtracted.includes(cleanUser));
+            (cleanExtracted.length >= 8 && cleanUser.includes(cleanExtracted)) || 
+            (cleanUser.length >= 8 && cleanExtracted.includes(cleanUser));
+
+          const isTxIdFuzzyMatch = 
+            isTxIdExactMatch || 
+            (cleanExtracted.length >= 5 && getSimilarityRatio(cleanExtracted, cleanUser) >= 0.75);
 
           console.log("Automated verification extraction diagnostics:", {
             cleanExtracted,
             cleanUser,
-            isTxIdMatching,
+            isTxIdExactMatch,
+            isTxIdFuzzyMatch,
             extractedAmount,
             requiredAmount,
             receiverText,
             matchesReceiver
           });
 
-          // We mark as approved if the transaction pattern, amount, and recipient filters are satisfied
-          if (isTxIdMatching && !isNaN(extractedAmount) && extractedAmount >= requiredAmount && matchesReceiver) {
+          // We mark as approved if the transaction code (ID) matches and the recipient/receiver name/method matches
+          if (isTxIdFuzzyMatch && matchesReceiver) {
              finalStatus = 'approved';
           } else {
-             // If the amount is less or any discrepancy, leave it as pending for manual review
+             // Leave it as pending for manual verification if any details mismatch
              finalStatus = 'pending';
-             if (extractedAmount < requiredAmount && matchesReceiver && isTxIdMatching) {
-                 finalStatus = 'rejected'; // Auto-reject if clearly underpaid
-             }
           }
         }
       } catch (analyzeErr) {
