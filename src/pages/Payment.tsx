@@ -29,6 +29,7 @@ export default function Payment({ user }: PaymentProps) {
   // Screenshot states
   const [screenshot, setScreenshot] = useState('');
   const [screenshotPreview, setScreenshotPreview] = useState('');
+  const [isCompressing, setIsCompressing] = useState(false);
 
   useEffect(() => {
     async function loadData() {
@@ -99,20 +100,21 @@ export default function Payment({ user }: PaymentProps) {
       return;
     }
 
+    setIsCompressing(true);
+
     const reader = new FileReader();
     reader.onload = (event) => {
       const base64Str = event.target?.result as string;
       setScreenshotPreview(base64Str);
-      setScreenshot(base64Str); // Set immediately as fallback so fast form submission works
       
-      // Perform dynamic client-side scaling/compression so it is extremely small and fits perfectly in firestore text limit
+      // Perform dynamic client-side scaling/compression so it is extremely small and fits perfectly inside Firestore limits and can be quickly parsed
       const img = new Image();
       img.onload = () => {
         const canvas = document.createElement('canvas');
         let width = img.width;
         let height = img.height;
         
-        const max_size = 750; // optimized size
+        const max_size = 700; // optimized size
         if (width > max_size || height > max_size) {
           if (width > height) {
             height = Math.round((height * max_size) / width);
@@ -128,18 +130,27 @@ export default function Payment({ user }: PaymentProps) {
         const ctx = canvas.getContext('2d');
         if (ctx) {
           ctx.drawImage(img, 0, 0, width, height);
-          // Compressed JPEG at 65% quality, results in only 20kb-40kb size representing high quality outputs
-          const compressed = canvas.toDataURL('image/jpeg', 0.65);
+          // Compressed JPEG at 60% quality is extremely optimized for OCR (20kb-45kb)
+          const compressed = canvas.toDataURL('image/jpeg', 0.6);
           setScreenshot(compressed);
         } else {
           setScreenshot(base64Str);
         }
+        setIsCompressing(false);
       };
+      
       img.onerror = () => {
         setScreenshot(base64Str);
+        setIsCompressing(false);
       };
+      
       img.src = base64Str;
     };
+
+    reader.onerror = () => {
+      setIsCompressing(false);
+    };
+
     reader.readAsDataURL(file);
   };
 
@@ -393,16 +404,22 @@ export default function Payment({ user }: PaymentProps) {
                         <img 
                           src={screenshotPreview} 
                           alt="Receipt Preview" 
-                          className="max-h-40 object-contain rounded border border-slate-200 bg-slate-50" 
+                          className={`max-h-40 object-contain rounded border border-slate-200 bg-slate-50 transition-opacity ${isCompressing ? 'opacity-40' : 'opacity-100'}`} 
                         />
+                        {isCompressing && (
+                          <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/60">
+                            <span className="text-xs font-bold text-blue-600 animate-pulse">Running image optimization...</span>
+                          </div>
+                        )}
                         <button
                           type="button"
+                          disabled={isCompressing}
                           onClick={() => {
                             setScreenshotPreview('');
                             setScreenshot('');
                             if (fileInputRef.current) fileInputRef.current.value = '';
                           }}
-                          className="mt-3 inline-flex items-center gap-1 text-xs text-red-655 hover:text-red-800 font-bold bg-red-50 hover:bg-red-100/55 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+                          className="mt-3 inline-flex items-center gap-1 text-xs text-red-655 hover:text-red-800 font-bold bg-red-50 hover:bg-red-100/55 px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
                         >
                           <Trash className="w-3.5 h-3.5" /> Remove Receipt screenshot
                         </button>
@@ -413,7 +430,7 @@ export default function Payment({ user }: PaymentProps) {
                           <Upload className="w-5 h-5" />
                         </div>
                         <span className="text-xs font-bold text-blue-600 hover:text-blue-500">
-                          Choose screenshot receipt file
+                          {isCompressing ? 'Processing file...' : 'Choose screenshot receipt file'}
                         </span>
                         <span className="text-[10px] text-slate-400 mt-1">PNG, JPG formats (auto-compressed on select)</span>
                         <input
@@ -422,6 +439,7 @@ export default function Payment({ user }: PaymentProps) {
                           ref={fileInputRef}
                           className="sr-only"
                           onChange={handleFileChange}
+                          disabled={isCompressing}
                           required
                         />
                       </label>
@@ -432,10 +450,10 @@ export default function Payment({ user }: PaymentProps) {
                 <div>
                   <button
                     type="submit"
-                    disabled={loading}
+                    disabled={loading || isCompressing}
                     className="w-full flex justify-center py-2.5 px-4 border border-transparent rounded-xl shadow-md text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 cursor-pointer transition-all hover:scale-[1.01]"
                   >
-                    {loading ? 'Submitting Details...' : 'Submit Payment Access Request'}
+                    {isCompressing ? 'Optimizing receipt image...' : loading ? 'Submitting Details...' : 'Submit Payment Access Request'}
                   </button>
                 </div>
               </form>
