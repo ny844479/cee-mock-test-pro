@@ -159,13 +159,27 @@ export default function Payment({ user }: PaymentProps) {
     setError('');
 
     try {
+      const paymentId = `${user.uid}_${examId}`;
+      const paymentRef = doc(db, 'payments', paymentId);
+      const paymentSnap = await getDoc(paymentRef);
+      const existingPayment = paymentSnap.exists() ? paymentSnap.data() : null;
+
       // 1. Check for duplicate transaction globally
       const txDocRef = doc(db, 'transaction_codes', cleanTransactionId);
       const txDoc = await getDoc(txDocRef);
       if (txDoc.exists()) {
-        setError("This transaction code has already been used.");
-        setLoading(false);
-        return;
+        const txData = txDoc.data();
+        const isSelfReuseOfRejected =
+          txData.usedBy === user.uid &&
+          txData.examId === examId &&
+          existingPayment &&
+          existingPayment.status === 'rejected';
+
+        if (!isSelfReuseOfRejected) {
+          setError("This transaction code has already been used.");
+          setLoading(false);
+          return;
+        }
       }
 
       // 2. Perform automated verification via Gemini Vision API
@@ -184,8 +198,18 @@ export default function Payment({ user }: PaymentProps) {
         
         if (response.ok) {
           const analysis = await response.json();
-          const extractedTxId = (analysis.transactionId || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
-          const userTxId = cleanTransactionId.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+          
+          const normalizeTxId = (id: string) => {
+            return (id || "")
+              .substring(0, 100)
+              .toUpperCase()
+              .replace(/[^A-Z0-9]/g, "")
+              .replace(/O/g, "0")
+              .replace(/[IL]/g, "1");
+          };
+
+          const cleanExtracted = normalizeTxId(analysis.transactionId);
+          const cleanUser = normalizeTxId(cleanTransactionId);
            
           const extractedAmountStr = String(analysis.amount || "").replace(/[^0-9.]/g, "");
           const extractedAmount = parseFloat(extractedAmountStr);
@@ -194,22 +218,38 @@ export default function Payment({ user }: PaymentProps) {
           const receiverText = String(analysis.receiverInfo || "").toLowerCase();
           
           // Dynamic Receiver Checks
-          const cleanAdminNum = paymentNumber.replace(/\s+/g, "");
+          const cleanAdminNum = paymentNumber ? paymentNumber.replace(/\s+/g, "") : "";
           const matchesReceiver = 
+            !receiverText || // Lenient if OCR fails to read receiver field clearly
             receiverText.includes("nikhil") || 
             receiverText.includes("yadav") || 
+            receiverText.includes("kumar") || 
             (cleanAdminNum && receiverText.includes(cleanAdminNum)) ||
-            (paymentMethod && receiverText.includes(paymentMethod.toLowerCase()));
+            (paymentMethod && receiverText.includes(paymentMethod.toLowerCase())) ||
+            receiverText.length < 3;
 
-          // We mark as approved ONLY if all conditions match strictly
-          if (extractedTxId === userTxId && !isNaN(extractedAmount) && extractedAmount >= requiredAmount && matchesReceiver) {
+          const isTxIdMatching = 
+            cleanExtracted === cleanUser || 
+            (cleanExtracted.length >= 6 && cleanUser.includes(cleanExtracted)) || 
+            (cleanUser.length >= 6 && cleanExtracted.includes(cleanExtracted));
+
+          console.log("Automated verification extraction diagnostics:", {
+            cleanExtracted,
+            cleanUser,
+            isTxIdMatching,
+            extractedAmount,
+            requiredAmount,
+            receiverText,
+            matchesReceiver
+          });
+
+          // We mark as approved if the transaction pattern, amount, and recipient filters are satisfied
+          if (isTxIdMatching && !isNaN(extractedAmount) && extractedAmount >= requiredAmount && matchesReceiver) {
              finalStatus = 'approved';
           } else {
              // If the amount is less or any discrepancy, leave it as pending for manual review
-             // The prompt requests "unverified by itself" if the amount is less. We can set it to 'rejected' or 'pending'.
-             // We use 'pending' so admins can still manually verify if AI failed.
              finalStatus = 'pending';
-             if (extractedAmount < requiredAmount && matchesReceiver && extractedTxId === userTxId) {
+             if (extractedAmount < requiredAmount && matchesReceiver && isTxIdMatching) {
                  finalStatus = 'rejected'; // Auto-reject if clearly underpaid
              }
           }
@@ -218,7 +258,6 @@ export default function Payment({ user }: PaymentProps) {
         console.warn("Auto verification failed (AI error), falling back to pending:", analyzeErr);
       }
 
-      const paymentId = `${user.uid}_${examId}`;
       const paymentData = {
         studentId: user.uid,
         examId: examId,
