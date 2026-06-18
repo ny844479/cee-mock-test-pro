@@ -103,6 +103,7 @@ export default function Payment({ user }: PaymentProps) {
     reader.onload = (event) => {
       const base64Str = event.target?.result as string;
       setScreenshotPreview(base64Str);
+      setScreenshot(base64Str); // Set immediately as fallback so fast form submission works
       
       // Perform dynamic client-side scaling/compression so it is extremely small and fits perfectly in firestore text limit
       const img = new Image();
@@ -161,8 +162,14 @@ export default function Payment({ user }: PaymentProps) {
     try {
       const paymentId = `${user.uid}_${examId}`;
       const paymentRef = doc(db, 'payments', paymentId);
-      const paymentSnap = await getDoc(paymentRef);
-      const existingPayment = paymentSnap.exists() ? paymentSnap.data() : null;
+      
+      let existingPayment = null;
+      try {
+        const paymentSnap = await getDoc(paymentRef);
+        existingPayment = paymentSnap.exists() ? paymentSnap.data() : null;
+      } catch (docErr) {
+        console.warn("Could not retrieve existing payment (this is expected on first submission):", docErr);
+      }
 
       // 1. Check for duplicate transaction globally
       const txDocRef = doc(db, 'transaction_codes', cleanTransactionId);
@@ -231,7 +238,7 @@ export default function Payment({ user }: PaymentProps) {
           const isTxIdMatching = 
             cleanExtracted === cleanUser || 
             (cleanExtracted.length >= 6 && cleanUser.includes(cleanExtracted)) || 
-            (cleanUser.length >= 6 && cleanExtracted.includes(cleanExtracted));
+            (cleanUser.length >= 6 && cleanExtracted.includes(cleanUser));
 
           console.log("Automated verification extraction diagnostics:", {
             cleanExtracted,
